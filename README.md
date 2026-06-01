@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/License-AGPLv3-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-green)
 ![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple)
-![Version](https://img.shields.io/badge/Version-v1.9.2-orange)
+![Version](https://img.shields.io/badge/Version-v1.9.3-orange)
 
 ---
 
@@ -45,6 +45,14 @@
 
 ---
 
+## v1.9.3 重要变更
+
+- 修复 `simple_rules`（放行权限 QQ 列表）的群号未同步到 AstrBot 平台白名单的问题；
+- `用户QQ-群号` 精确放行规则中的群消息现在可以先进入插件判断阶段；
+- 未命中 `simple_rules` 的群成员仍会被权限控制器拦截，不会变成整群放行。
+
+---
+
 ## v1.9.2 重要变更
 
 - 升级版本号到 `v1.9.2`；
@@ -64,13 +72,13 @@
 推荐下载 Release 安装包：
 
 ```text
-astrbot_plugin_permission_controller-v1.9.2.zip
+astrbot_plugin_permission_controller-v1.9.3.zip
 ```
 
 Release 地址：
 
 ```text
-https://github.com/xiaokangzaina/astrbot_plugin_permission_controller/releases/tag/v1.9.2
+https://github.com/xiaokangzaina/astrbot_plugin_permission_controller/releases/tag/v1.9.3
 ```
 
 在 AstrBot 插件管理页面选择本地 ZIP 安装即可。
@@ -253,6 +261,10 @@ Web 配置页保存后会刷新插件运行时缓存。手动改配置文件时�
 ---
 
 ## 更新记录
+
+### v1.9.3
+
+- 修复 `simple_rules` 中群号未同步到平台白名单，导致 `用户QQ-群号` 放行规则在部分群不生效的问题。
 
 ### v1.9.2
 

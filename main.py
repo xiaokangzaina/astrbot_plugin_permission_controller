@@ -41,7 +41,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "按 用户QQ-群号/群号列表 限制谁能调用模型/机器人",
-    "1.9.1",
+    "1.9.3",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
@@ -505,11 +505,15 @@ class GroupUserWhitelistPlugin(Star):
         """把插件放行对象双向同步到 AstrBot 平台 ID 白名单。
 
         AstrBot 核心平台白名单检查早于普通插件 handler。这里同步
-        private_chat_users 和 allowed_groups 到平台 id_whitelist。
+        private_chat_users、allowed_groups，以及 simple_rules 中涉及的群号
+        到平台 id_whitelist，确保 用户QQ-群号 精确放行规则能进入插件判断。
         删除插件配置中的 ID 时，也会从平台白名单移除；但只移除本插件
         历史同步过的 ID，避免误删用户手动添加的平台白名单。
         """
-        plugin_allowlist = self.allowed_groups | self.private_chat_users
+        rule_group_ids = {group_id for group_id in self.rules if group_id}
+        plugin_allowlist = (
+            self.allowed_groups | self.private_chat_users | rule_group_ids
+        )
 
         try:
             global_config = self.context.get_config()
