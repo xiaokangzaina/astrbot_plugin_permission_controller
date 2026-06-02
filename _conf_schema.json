@@ -47,6 +47,12 @@
         "type": "list",
         "default": []
       },
+      "group_deny_rules": {
+        "description": "本群禁止调用用户列表",
+        "hint": "格式：用户QQ-群号。每行一条规则，表示该用户在该群禁止调用机器人；优先级高于整群放行和本群允许用户。",
+        "type": "list",
+        "default": []
+      },
       "enable_group_blacklist": {
         "description": "启用群聊禁止调用黑名单",
         "hint": "开启后，group_blacklist 中配置的 QQ 号会在群聊中被禁止调用机器人。",

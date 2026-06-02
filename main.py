@@ -22,7 +22,11 @@ except Exception:  # pragma: no cover - web 模块缺失时不影响核心功能
 logger = logging.getLogger(__name__)
 
 class _AstrBotAfterMessageSentLogFilter(logging.Filter):
-    """屏蔽 AstrBot 权限拦截后产生的冗余发送/终止传播日志。"""
+    """屏蔽权限控制器场景下的 after_message_sent 终止传播冗余日志。
+
+    不过滤 core.event_bus 入站消息概要，其他人的消息日志会正常显示。
+    机器人自己发送的消息日志也会保留。
+    """
 
     TARGET_TEXTS = (
         "astrbot - after_message_sent 终止了事件传播。",
@@ -31,7 +35,9 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
-            return not any(text in message for text in self.TARGET_TEXTS)
+            if any(text in message for text in self.TARGET_TEXTS):
+                return False
+            return True
         except Exception:
             return True
 
@@ -62,7 +68,8 @@ class GroupUserWhitelistPlugin(Star):
         super().__init__(context)
         self.context = context
         self.config = config or {}
-        self.rules = self._load_rules()
+        self.rules = self._load_rules("simple_rules")
+        self.deny_rules = self._load_rules("group_deny_rules")
         self.admin_bypass = self._get_bool_config("admin_bypass", True)
         self.admin_wake_bypass = self._get_bool_config("admin_wake_bypass", False)
         self.enable_group_rules = self._get_bool_config("enable_group_rules", True)
@@ -105,7 +112,8 @@ class GroupUserWhitelistPlugin(Star):
 
     def reload_runtime_config(self):
         """供配置页保存后调用：重新读取配置并刷新运行时缓存。"""
-        self.rules = self._load_rules()
+        self.rules = self._load_rules("simple_rules")
+        self.deny_rules = self._load_rules("group_deny_rules")
         self.admin_bypass = self._get_bool_config("admin_bypass", True)
         self.admin_wake_bypass = self._get_bool_config("admin_wake_bypass", False)
         self.enable_group_rules = self._get_bool_config("enable_group_rules", True)
@@ -134,6 +142,9 @@ class GroupUserWhitelistPlugin(Star):
             logging.getLogger("Core"),
             logging.getLogger("core"),
             logging.getLogger("astrbot.core"),
+            logging.getLogger("astrbot.core.event_bus"),
+            logging.getLogger("core.event_bus"),
+            logging.getLogger("event_bus"),
             logging.getLogger("astrbot.core.pipeline.respond.stage"),
             logging.getLogger("astrbot.core.pipeline.context_utils"),
         ]
@@ -150,6 +161,7 @@ class GroupUserWhitelistPlugin(Star):
     _GROUP_CONFIG_KEYS = {
         "enable_group_rules",
         "simple_rules",
+        "group_deny_rules",
         "allowed_groups",
         "enable_group_blacklist",
         "group_blacklist",
@@ -555,9 +567,9 @@ class GroupUserWhitelistPlugin(Star):
         #    这样下一次能确认旧同步项已被插件释放。
         self._save_plugin_synced_ids(plugin_allowlist)
 
-    def _load_rules(self):
-        """解析 用户QQ-群号 规则，生成 group_id -> allowed_user_ids 映射。"""
-        raw_rules = self._cfg_get("simple_rules", [])
+    def _load_rules(self, config_key: str = "simple_rules"):
+        """解析 用户QQ-群号 规则，生成 group_id -> user_ids 映射。"""
+        raw_rules = self._cfg_get(config_key, [])
         if not isinstance(raw_rules, list):
             raw_rules = []
         if not raw_rules:
@@ -624,6 +636,11 @@ class GroupUserWhitelistPlugin(Star):
         # 2. 命中“放行权限 QQ 列表”的 用户QQ-群号 组合。
         # 未配置的群、未配置的用户一律拦截，避免“未填写群号仍可调用”。
         if self.admin_bypass and self._is_admin(sender_id):
+            return
+
+        denied_users = self.deny_rules.get(group_id, set())
+        if sender_id and sender_id in denied_users:
+            event.stop_event()
             return
 
         if group_id in self.allowed_groups:

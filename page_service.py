@@ -87,17 +87,25 @@ class PermissionPageService:
             raise ValueError("group_id must not be empty")
         config = self._read_current_config()
         users = []
+        denied_users = []
         for rule in _normalize_list(config.get("simple_rules")):
             if "-" not in rule:
                 continue
             user_id, target_group_id = rule.split("-", 1)
             if target_group_id.strip() == group_id and user_id.strip():
                 users.append(user_id.strip())
+        for rule in _normalize_list(config.get("group_deny_rules")):
+            if "-" not in rule:
+                continue
+            user_id, target_group_id = rule.split("-", 1)
+            if target_group_id.strip() == group_id and user_id.strip():
+                denied_users.append(user_id.strip())
         return {
             "group_info": self._build_group_info(group_id),
             "config": {
                 "group_enabled": group_id in set(_normalize_list(config.get("allowed_groups"))),
                 "allowed_users": sorted(set(users)),
+                "denied_users": sorted(set(denied_users)),
             },
         }
 
@@ -112,6 +120,7 @@ class PermissionPageService:
         config = self._read_current_config()
         allowed_groups = set(_normalize_list(config.get("allowed_groups")))
         simple_rules = []
+        deny_rules = []
         for rule in _normalize_list(config.get("simple_rules")):
             if "-" not in rule:
                 simple_rules.append(rule)
@@ -119,6 +128,13 @@ class PermissionPageService:
             user_id, target_group_id = rule.split("-", 1)
             if target_group_id.strip() != group_id:
                 simple_rules.append(f"{user_id.strip()}-{target_group_id.strip()}")
+        for rule in _normalize_list(config.get("group_deny_rules")):
+            if "-" not in rule:
+                deny_rules.append(rule)
+                continue
+            user_id, target_group_id = rule.split("-", 1)
+            if target_group_id.strip() != group_id:
+                deny_rules.append(f"{user_id.strip()}-{target_group_id.strip()}")
 
         if _parse_bool(payload.get("group_enabled")):
             allowed_groups.add(group_id)
@@ -128,17 +144,21 @@ class PermissionPageService:
         for user_id in _normalize_list(payload.get("allowed_users")):
             if user_id.isdigit():
                 simple_rules.append(f"{user_id}-{group_id}")
+        for user_id in _normalize_list(payload.get("denied_users")):
+            if user_id.isdigit():
+                deny_rules.append(f"{user_id}-{group_id}")
 
         self._write_config({
             "allowed_groups": sorted(allowed_groups),
             "simple_rules": sorted(set(simple_rules)),
+            "group_deny_rules": sorted(set(deny_rules)),
         })
         self._touch_group_config(group_id)
         return self.get_group_config(group_id)
 
     def reset_group_config(self, group_id: str) -> dict[str, Any]:
         """清空单群放行和该群用户规则。"""
-        return self.update_group_config(group_id, {"group_enabled": False, "allowed_users": []})
+        return self.update_group_config(group_id, {"group_enabled": False, "allowed_users": [], "denied_users": []})
 
     def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """根据前端提交的扁平 key->value，按 schema 清洗并写回配置文件。"""
@@ -204,13 +224,14 @@ class PermissionPageService:
 
     def _build_configured_groups(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         group_ids = set(_normalize_list(config.get("allowed_groups")))
-        for rule in _normalize_list(config.get("simple_rules")):
-            if "-" not in rule:
-                continue
-            _, group_id = rule.split("-", 1)
-            group_id = group_id.strip()
-            if group_id:
-                group_ids.add(group_id)
+        for key in ("simple_rules", "group_deny_rules"):
+            for rule in _normalize_list(config.get(key)):
+                if "-" not in rule:
+                    continue
+                _, group_id = rule.split("-", 1)
+                group_id = group_id.strip()
+                if group_id:
+                    group_ids.add(group_id)
         return [self._build_group_info(group_id, source="configured") for group_id in sorted(group_ids)]
 
     def _build_group_info(self, group_id: str, source: str = "fallback") -> dict[str, Any]:

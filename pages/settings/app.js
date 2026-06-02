@@ -203,15 +203,27 @@ function renderGroupForm(payload) {
   usersField.className = "field";
   usersField.innerHTML = `
     <div class="field-label">本群允许用户</div>
-    <div class="field-hint">每行一个 QQ 号。保存后会自动写入“用户QQ-群号”规则。</div>
+    <div class="field-hint">每行一个 QQ 号。保存后会自动写入“用户QQ-群号”放行规则。</div>
     <textarea id="allowedUsersInput" rows="8" spellcheck="false" placeholder="每行一个 QQ 号"></textarea>
   `;
   usersField.querySelector("textarea").value = Array.isArray(config.allowed_users)
     ? config.allowed_users.join("\n")
     : "";
 
+  const deniedUsersField = document.createElement("div");
+  deniedUsersField.className = "field";
+  deniedUsersField.innerHTML = `
+    <div class="field-label">本群不允许调用用户</div>
+    <div class="field-hint">每行一个 QQ 号。命中后该用户在本群无法调用机器人，优先级高于整群放行和本群允许用户。</div>
+    <textarea id="deniedUsersInput" rows="8" spellcheck="false" placeholder="每行一个 QQ 号"></textarea>
+  `;
+  deniedUsersField.querySelector("textarea").value = Array.isArray(config.denied_users)
+    ? config.denied_users.join("\n")
+    : "";
+
   els.groupForm.appendChild(enabledField);
   els.groupForm.appendChild(usersField);
+  els.groupForm.appendChild(deniedUsersField);
   renderGroupList();
 }
 
@@ -219,6 +231,7 @@ function collectGroupForm() {
   return {
     group_enabled: Boolean(document.getElementById("groupEnabledInput")?.checked),
     allowed_users: normalizeListText(document.getElementById("allowedUsersInput")?.value),
+    denied_users: normalizeListText(document.getElementById("deniedUsersInput")?.value),
   };
 }
 
@@ -283,7 +296,7 @@ async function resetGroupConfig() {
     toast("请先选择群聊", "error");
     return;
   }
-  if (!window.confirm("确定清空该群的整群放行和允许用户吗？")) return;
+  if (!window.confirm("确定清空该群的整群放行、允许用户和不允许调用用户吗？")) return;
   els.resetGroupBtn.disabled = true;
   try {
     const data = await api.safePost("settings/group/reset", { group_id: groupId });
