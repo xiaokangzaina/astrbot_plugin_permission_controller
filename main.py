@@ -615,9 +615,28 @@ class GroupUserWhitelistPlugin(Star):
         """私聊 ID 兼容：QQ号、sender.user_id、session_id、unified_msg_origin 分段都参与匹配。"""
         return self._private_sender_candidates_from_event(event)
 
+    @staticmethod
+    def _raw_post_type(event: AstrMessageEvent) -> str:
+        """读取 aiocqhttp 原始 post_type。request/notice 不是普通聊天消息。"""
+        try:
+            raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+            if isinstance(raw, dict):
+                return str(raw.get("post_type", "")).strip().lower()
+        except Exception:
+            pass
+        return ""
+
+    @classmethod
+    def _is_non_chat_raw_event(cls, event: AstrMessageEvent) -> bool:
+        """放行加群申请、进退群通知等非聊天事件，避免影响群管类插件。"""
+        return cls._raw_post_type(event) in {"request", "notice", "meta_event"}
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=maxsize)
     async def check_group_user_whitelist(self, event: AstrMessageEvent):
         """群聊权限入口：黑名单优先，其次按管理员和放行规则判断。"""
+        if self._is_non_chat_raw_event(event):
+            return
+
         group_id = str(event.get_group_id() or "").strip()
         sender_id = str(event.get_sender_id() or "").strip()
 
@@ -659,6 +678,9 @@ class GroupUserWhitelistPlugin(Star):
         使用 ALL + event.is_private_chat() 兜底，避免部分适配器/版本下
         PRIVATE_MESSAGE 过滤器未命中导致私聊白名单不生效。
         """
+        if self._is_non_chat_raw_event(event):
+            return
+
         try:
             if not event.is_private_chat():
                 return
