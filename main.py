@@ -631,10 +631,29 @@ class GroupUserWhitelistPlugin(Star):
         """放行加群申请、进退群通知等非聊天事件，避免影响群管类插件。"""
         return cls._raw_post_type(event) in {"request", "notice", "meta_event"}
 
+    @staticmethod
+    def _is_dashboard_chat_event(event: AstrMessageEvent) -> bool:
+        """放行 AstrBot Dashboard 自带 Chat/WebChat 测试会话。"""
+        try:
+            platform_name = str(getattr(getattr(event, "platform_meta", None), "name", "")).lower()
+            if platform_name in {"webchat", "dashboard"}:
+                return True
+        except Exception:
+            pass
+
+        try:
+            umo = str(getattr(event, "unified_msg_origin", "") or "").lower()
+            if umo.startswith("webchat:") or ":webchat" in umo or "dashboard" in umo:
+                return True
+        except Exception:
+            pass
+
+        return False
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=maxsize)
     async def check_group_user_whitelist(self, event: AstrMessageEvent):
         """群聊权限入口：黑名单优先，其次按管理员和放行规则判断。"""
-        if self._is_non_chat_raw_event(event):
+        if self._is_non_chat_raw_event(event) or self._is_dashboard_chat_event(event):
             return
 
         group_id = str(event.get_group_id() or "").strip()
@@ -678,7 +697,7 @@ class GroupUserWhitelistPlugin(Star):
         使用 ALL + event.is_private_chat() 兜底，避免部分适配器/版本下
         PRIVATE_MESSAGE 过滤器未命中导致私聊白名单不生效。
         """
-        if self._is_non_chat_raw_event(event):
+        if self._is_non_chat_raw_event(event) or self._is_dashboard_chat_event(event):
             return
 
         try:

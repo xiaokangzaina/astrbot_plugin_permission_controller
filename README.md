@@ -203,6 +203,11 @@ request / notice / meta_event 不再进入权限拦截逻辑
 
 ## 更新日志
 
+### v1.9.6
+
+- 修复权限控制器拦截 AstrBot Dashboard Chat/WebChat 测试会话的问题
+- Dashboard / WebChat 测试会话直接放行，不影响 QQ 群聊、QQ 私聊权限规则
+
 ### v1.9.5
 
 - 修复权限控制器可能拦截 QQ 群管插件进群自动审批的问题
