@@ -203,6 +203,11 @@ request / notice / meta_event 不再进入权限拦截逻辑
 
 ## 更新日志
 
+### v1.9.7
+
+- 清理运行缓存，确认源码无明显无效代码
+- 代码质量检查通过，无功能变更
+
 ### v1.9.6
 
 - 修复权限控制器拦截 AstrBot Dashboard Chat/WebChat 测试会话的问题
