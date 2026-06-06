@@ -22,20 +22,22 @@ except Exception:  # pragma: no cover - web 模块缺失时不影响核心功能
 logger = logging.getLogger(__name__)
 
 class _AstrBotAfterMessageSentLogFilter(logging.Filter):
-    """屏蔽权限控制器场景下的 after_message_sent 终止传播冗余日志。
-
-    不过滤 core.event_bus 入站消息概要，其他人的消息日志会正常显示。
-    机器人自己发送的消息日志也会保留。
-    """
+    """屏蔽权限控制器场景下的发送/终止传播冗余日志。"""
 
     TARGET_TEXTS = (
         "astrbot - after_message_sent 终止了事件传播。",
     )
 
+    @staticmethod
+    def _is_prepare_to_send_noise(message: str) -> bool:
+        return "Prepare to send - " in message
+
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
             if any(text in message for text in self.TARGET_TEXTS):
+                return False
+            if self._is_prepare_to_send_noise(message):
                 return False
             return True
         except Exception:
