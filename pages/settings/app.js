@@ -27,12 +27,36 @@ const els = {
   saveGroupBtn: document.getElementById("saveGroupBtn"),
 };
 
+function isValidThemePreference(value) {
+  return value === "light" || value === "dark" || value === "auto";
+}
+
+function loadThemePreferenceFromCookie() {
+  try {
+    const cookies = document.cookie ? document.cookie.split(";") : [];
+    const prefix = `${THEME_STORAGE_KEY}=`;
+    const matched = cookies
+      .map((item) => item.trim())
+      .find((item) => item.startsWith(prefix));
+    if (!matched) return null;
+    const value = decodeURIComponent(matched.slice(prefix.length));
+    return isValidThemePreference(value) ? value : null;
+  } catch {}
+  return null;
+}
+
+function saveThemePreferenceToCookie(value) {
+  try {
+    document.cookie = `${THEME_STORAGE_KEY}=${encodeURIComponent(value)}; max-age=31536000; path=/; SameSite=Lax`;
+  } catch {}
+}
+
 function loadThemePreference() {
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (["light", "dark", "auto"].includes(stored)) return stored;
+    if (isValidThemePreference(stored)) return stored;
   } catch {}
-  return "auto";
+  return loadThemePreferenceFromCookie() || "auto";
 }
 
 function loadGroupTouchTimes() {
@@ -80,6 +104,39 @@ function saveThemePreference() {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
   } catch {}
+  saveThemePreferenceToCookie(themePreference);
+}
+
+function setThemePreference(value) {
+  if (!isValidThemePreference(value)) {
+    return false;
+  }
+  themePreference = value;
+  saveThemePreference();
+  return true;
+}
+
+async function loadThemePreferenceFromBackend() {
+  if (!api) {
+    return;
+  }
+  try {
+    const result = await api.safeGet("/settings/theme");
+    const value = result?.theme || result;
+    const hasPersistedBackendTheme = result?.persisted === true;
+    if (hasPersistedBackendTheme || themePreference === "auto") {
+      setThemePreference(value);
+    } else {
+      saveThemePreferenceToBackend();
+    }
+  } catch {}
+}
+
+function saveThemePreferenceToBackend() {
+  if (!api) {
+    return;
+  }
+  api.safePost("/settings/theme", { theme: themePreference }).catch(() => {});
 }
 
 function themeButtonLabel() {
@@ -101,6 +158,7 @@ function cycleTheme() {
   themePreference =
     themePreference === "auto" ? "light" : themePreference === "light" ? "dark" : "auto";
   saveThemePreference();
+  saveThemePreferenceToBackend();
   applyTheme();
 }
 
@@ -180,50 +238,113 @@ function renderGroupForm(payload) {
   currentGroup = payload;
   const info = payload.group_info || {};
   const config = payload.config || {};
+  const allowedUsers = Array.isArray(config.allowed_users) ? config.allowed_users : [];
+  const deniedUsers = Array.isArray(config.denied_users) ? config.denied_users : [];
   els.currentGroupTitle.textContent = info.group_name || `群 ${info.group_id || ""}`;
   els.currentGroupMeta.textContent = info.group_id ? `群号：${info.group_id}` : "请选择左侧群聊";
 
   els.groupForm.innerHTML = "";
   els.groupForm.classList.remove("empty-state");
 
-  const enabledField = document.createElement("div");
-  enabledField.className = "field field-bool";
-  enabledField.innerHTML = `
-    <div>
-      <div class="field-label">整群放行</div>
-      <div class="field-hint">开启后，该群所有成员都可调用机器人。</div>
+  const overview = document.createElement("div");
+  overview.className = "policy-overview";
+  overview.innerHTML = `
+    <div class="metric-card ${config.group_enabled ? "is-on" : "is-off"}">
+      <span class="metric-label">访问模式</span>
+      <strong>${config.group_enabled ? "整群放行" : "精准授权"}</strong>
+      <em>${config.group_enabled ? "群内成员默认可调用" : "仅白名单用户可调用"}</em>
     </div>
-    <label class="switch">
-      <input id="groupEnabledInput" type="checkbox" ${config.group_enabled ? "checked" : ""} />
-      <span class="switch-slider"></span>
-    </label>
+    <div class="metric-card">
+      <span class="metric-label">允许用户</span>
+      <strong>${allowedUsers.length}</strong>
+      <em>白名单条目</em>
+    </div>
+    <div class="metric-card danger">
+      <span class="metric-label">拒绝用户</span>
+      <strong>${deniedUsers.length}</strong>
+      <em>黑名单条目</em>
+    </div>
   `;
 
-  const usersField = document.createElement("div");
-  usersField.className = "field";
-  usersField.innerHTML = `
-    <div class="field-label">本群允许用户</div>
-    <div class="field-hint">每行一个 QQ 号。保存后会自动写入“用户QQ-群号”放行规则。</div>
-    <textarea id="allowedUsersInput" rows="8" spellcheck="false" placeholder="每行一个 QQ 号"></textarea>
+  const accessCard = document.createElement("section");
+  accessCard.className = "group-card policy-card";
+  accessCard.innerHTML = `
+    <div class="group-card-head">
+      <div>
+        <span class="section-index">01</span>
+        <h3>访问策略</h3>
+        <p class="group-card-hint">决定该群是整体开放，还是只允许指定成员调用机器人。</p>
+      </div>
+    </div>
+    <div class="field field-bool feature-toggle-card">
+      <div>
+        <div class="field-label">整群放行</div>
+        <div class="field-hint">开启后，该群所有成员都可调用机器人；关闭后仅“本群允许用户”可以调用。</div>
+      </div>
+      <label class="switch">
+        <input id="groupEnabledInput" type="checkbox" ${config.group_enabled ? "checked" : ""} />
+        <span class="switch-slider"></span>
+      </label>
+    </div>
   `;
-  usersField.querySelector("textarea").value = Array.isArray(config.allowed_users)
-    ? config.allowed_users.join("\n")
-    : "";
 
-  const deniedUsersField = document.createElement("div");
-  deniedUsersField.className = "field";
-  deniedUsersField.innerHTML = `
-    <div class="field-label">本群不允许调用用户</div>
-    <div class="field-hint">每行一个 QQ 号。命中后该用户在本群无法调用机器人，优先级高于整群放行和本群允许用户。</div>
-    <textarea id="deniedUsersInput" rows="8" spellcheck="false" placeholder="每行一个 QQ 号"></textarea>
+  const allowCard = document.createElement("section");
+  allowCard.className = "group-card policy-card allow-card";
+  allowCard.innerHTML = `
+    <div class="group-card-head split-head">
+      <div>
+        <span class="section-index">02</span>
+        <h3>本群允许用户</h3>
+        <p class="group-card-hint">每行一个 QQ 号。保存后会自动写入“用户QQ-群号”放行规则。</p>
+      </div>
+      <span class="count-badge">${allowedUsers.length} 人</span>
+    </div>
+    <div class="field list-field">
+      <div class="field-label">白名单列表</div>
+      <textarea id="allowedUsersInput" rows="9" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
+    </div>
   `;
-  deniedUsersField.querySelector("textarea").value = Array.isArray(config.denied_users)
-    ? config.denied_users.join("\n")
-    : "";
+  allowCard.querySelector("textarea").value = allowedUsers.join("\n");
 
-  els.groupForm.appendChild(enabledField);
-  els.groupForm.appendChild(usersField);
-  els.groupForm.appendChild(deniedUsersField);
+  const denyCard = document.createElement("section");
+  denyCard.className = "group-card policy-card deny-card";
+  denyCard.innerHTML = `
+    <div class="group-card-head split-head">
+      <div>
+        <span class="section-index">03</span>
+        <h3>本群拒绝用户</h3>
+        <p class="group-card-hint">每行一个 QQ 号。命中后该用户在本群无法调用机器人。</p>
+      </div>
+      <span class="count-badge danger">${deniedUsers.length} 人</span>
+    </div>
+    <div class="field list-field">
+      <div class="field-label">黑名单列表</div>
+      <textarea id="deniedUsersInput" rows="9" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
+    </div>
+  `;
+  denyCard.querySelector("textarea").value = deniedUsers.join("\n");
+
+  const ruleCard = document.createElement("section");
+  ruleCard.className = "group-card rule-card";
+  ruleCard.innerHTML = `
+    <div class="group-card-head">
+      <span class="section-index">04</span>
+      <h3>判定优先级</h3>
+      <p class="group-card-hint">规则从上到下匹配，拒绝名单优先级最高。</p>
+    </div>
+    <div class="rule-flow">
+      <div><b>1</b><span>拒绝用户命中</span><em>直接禁止调用</em></div>
+      <div><b>2</b><span>整群放行开启</span><em>群成员默认允许</em></div>
+      <div><b>3</b><span>允许用户命中</span><em>指定成员允许</em></div>
+      <div><b>4</b><span>未命中规则</span><em>保持拦截</em></div>
+    </div>
+  `;
+
+  els.groupForm.appendChild(overview);
+  els.groupForm.appendChild(accessCard);
+  els.groupForm.appendChild(allowCard);
+  els.groupForm.appendChild(denyCard);
+  els.groupForm.appendChild(ruleCard);
   renderGroupList();
 }
 
@@ -343,11 +464,15 @@ function init() {
     els.groupForm.textContent = "初始化失败：" + err.message;
     return;
   }
-  loadBootstrap().catch((err) => {
-    els.groupForm.textContent = "加载失败：" + err.message;
-    els.groupForm.classList.add("empty-state");
-    toast("加载失败：" + err.message, "error");
-  });
+  loadThemePreferenceFromBackend()
+    .then(() => applyTheme())
+    .finally(() => {
+      loadBootstrap().catch((err) => {
+        els.groupForm.textContent = "加载失败：" + err.message;
+        els.groupForm.classList.add("empty-state");
+        toast("加载失败：" + err.message, "error");
+      });
+    });
 }
 
 init();

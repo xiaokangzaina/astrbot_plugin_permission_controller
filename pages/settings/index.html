@@ -9,10 +9,16 @@
 <body>
     <div class="page-shell">
         <section class="workspace-shell">
-            <header class="page-head">
+            <header class="page-head module-card hero-card">
                 <div class="page-head-text">
+                    <div class="eyebrow">Permission Center</div>
                     <h2 class="page-title">权限控制器</h2>
-                    <p class="page-subtitle">像 QQAdmin 一样，点击群聊头像后配置该群权限</p>
+                    <p class="page-subtitle">以群为模块管理放行、拒绝与白名单规则，统一控制 AstrBot 调用权限。</p>
+                    <div class="hero-pills" aria-hidden="true">
+                        <span>群权限</span>
+                        <span>用户规则</span>
+                        <span>黑白名单</span>
+                    </div>
                 </div>
                 <div class="page-head-actions">
                     <button class="ghost-button" id="toggleThemeBtn">主题：自动</button>
@@ -21,14 +27,21 @@
             </header>
 
             <main class="group-workspace">
-                <aside class="group-sidebar">
+                <aside class="group-sidebar module-card">
+                    <div class="module-title-row">
+                        <div>
+                            <span class="module-kicker">Groups</span>
+                            <h3>群聊模块</h3>
+                        </div>
+                    </div>
                     <input id="groupSearchInput" class="group-search" type="text" placeholder="搜索群名或群号" />
                     <div id="groupList" class="group-list empty-state">群列表加载中…</div>
                 </aside>
 
-                <section class="group-config-panel">
+                <section class="group-config-panel module-card">
                     <div class="group-config-head">
                         <div>
+                            <span class="module-kicker">Policy</span>
                             <h3 id="currentGroupTitle">请选择群聊</h3>
                             <p id="currentGroupMeta">点击左侧群聊头像即可配置</p>
                         </div>
