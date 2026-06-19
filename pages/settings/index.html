@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>权限控制器配置</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=super_ui_20260619_2233" />
 </head>
 <body>
     <div class="page-shell">
@@ -19,10 +19,23 @@
                         <span>用户规则</span>
                         <span>黑白名单</span>
                     </div>
+                    <div class="hero-status-row" aria-label="状态概览">
+                        <section class="side-meta top-contact-meta">
+                            <div><span>群聊</span><strong id="groupCountLabel">0</strong></div>
+                            <div><span>私聊</span><strong id="privateCountLabel">0</strong></div>
+                        </section>
+                        <section class="hero-info-grid" aria-label="状态信息">
+                            <div class="hero-info-card"><span>当前时间</span><strong id="currentTimeLabel">--:--:--</strong><em id="currentDateLabel">加载中</em></div>
+                            <div class="hero-info-card"><span>系统版本</span><strong id="systemVersionLabel">读取中</strong><em id="pythonVersionLabel">Python --</em></div>
+                            <div class="hero-info-card"><span>所在地天气</span><strong id="weatherLabel">定位中</strong><em id="weatherMetaLabel">需要浏览器定位</em></div>
+                        </section>
+                    </div>
                 </div>
                 <div class="page-head-actions">
                     <button class="ghost-button" id="toggleThemeBtn">主题：自动</button>
                     <button class="ghost-button" id="refreshGroupsBtn">同步群列表</button>
+                    <button class="ghost-button" id="resetGroupBtn">清空该群配置</button>
+                    <button class="primary-button" id="saveGroupBtn">保存群聊配置</button>
                 </div>
             </header>
 
@@ -47,16 +60,12 @@
                         </div>
                     </div>
                     <div id="groupForm" class="form-stack empty-state">请从左侧选择一个群聊。</div>
-                    <div class="sticky-actions">
-                        <button class="ghost-button" id="resetGroupBtn">清空该群配置</button>
-                        <button class="primary-button" id="saveGroupBtn">保存该群配置</button>
-                    </div>
                 </section>
             </main>
         </section>
     </div>
 
     <div class="toast-layer" id="toastLayer"></div>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=super_ui_20260619_2233"></script>
 </body>
 </html>

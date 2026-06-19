@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from astrbot.api import logger
 from astrbot.api.star import Context
@@ -63,6 +66,12 @@ class PermissionWebController:
                 "Load permission settings bootstrap data",
             ),
             (
+                "/settings/weather",
+                self.page_weather,
+                ["GET"],
+                "Proxy current weather by browser location",
+            ),
+            (
                 "/settings/theme",
                 self.page_get_theme,
                 ["GET"],
@@ -79,6 +88,25 @@ class PermissionWebController:
                 self.page_refresh_groups,
                 ["POST"],
                 "Refresh QQ group list",
+            ),
+            (
+                "/settings/private/refresh",
+                self.page_refresh_private_contacts,
+                ["POST"],
+                "Refresh QQ friend list",
+            ),
+            ("/settings/private", self.page_get_private_contact, ["GET"], "Load one private contact config"),
+            (
+                "/settings/private",
+                self.page_update_private_contact,
+                ["POST"],
+                "Update one private contact config",
+            ),
+            (
+                "/settings/private/reset",
+                self.page_reset_private_contact,
+                ["POST"],
+                "Reset one private contact config",
             ),
             ("/settings/group", self.page_get_group, ["GET"], "Load one group config"),
             (
@@ -153,6 +181,43 @@ class PermissionWebController:
             {"ok": True, "data": self.service.get_bootstrap_payload()}
         )
 
+    async def page_weather(self):
+        args = self._request().args
+        try:
+            latitude = float(args.get("latitude", ""))
+            longitude = float(args.get("longitude", ""))
+        except (TypeError, ValueError):
+            raise ValueError("invalid location")
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise ValueError("invalid location")
+        query = urlencode(
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "current": "temperature_2m,weather_code",
+                "timezone": "auto",
+            }
+        )
+        url = f"https://api.open-meteo.com/v1/forecast?{query}"
+        payload = await asyncio.to_thread(self._fetch_weather_payload, url)
+        current = payload.get("current") or {}
+        return self._jsonify(
+            {
+                "ok": True,
+                "data": {
+                    "temperature": current.get("temperature_2m"),
+                    "weather_code": current.get("weather_code"),
+                    "time": current.get("time"),
+                },
+            }
+        )
+
+    @staticmethod
+    def _fetch_weather_payload(url: str) -> dict[str, Any]:
+        with urlopen(url, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+
     async def page_get_theme(self):
         return self._jsonify(
             {
@@ -172,6 +237,28 @@ class PermissionWebController:
     async def page_refresh_groups(self):
         groups = await self.service.list_groups(force=True)
         return self._jsonify({"ok": True, "data": groups})
+
+    async def page_refresh_private_contacts(self):
+        contacts = await self.service.list_private_contacts(force=True)
+        return self._jsonify({"ok": True, "data": contacts})
+
+    async def page_get_private_contact(self):
+        user_id = self._request().args.get("user_id", "")
+        return self._jsonify(
+            {"ok": True, "data": self.service.get_private_contact_config(user_id)}
+        )
+
+    async def page_update_private_contact(self):
+        payload = await self._request().get_json(force=True, silent=True) or {}
+        user_id = payload.get("user_id", "")
+        config = payload.get("config", {})
+        result = self.service.update_private_contact_config(user_id, config)
+        return self._jsonify({"ok": True, "message": "私聊配置已保存", "data": result})
+
+    async def page_reset_private_contact(self):
+        payload = await self._request().get_json(force=True, silent=True) or {}
+        result = self.service.reset_private_contact_config(payload.get("user_id", ""))
+        return self._jsonify({"ok": True, "message": "私聊配置已重置", "data": result})
 
     async def page_get_group(self):
         group_id = self._request().args.get("group_id", "")

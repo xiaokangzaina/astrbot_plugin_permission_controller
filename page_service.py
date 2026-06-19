@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,18 @@ def _normalize_list(value: Any) -> list[str]:
     return [str(item).strip() for item in parts if str(item).strip()]
 
 
+def _get_astrbot_version() -> str:
+    try:
+        from astrbot.core.config.default import VERSION
+
+        value = str(VERSION or "").strip()
+        if value:
+            return value if value.startswith("v") else f"v{value}"
+    except Exception:
+        pass
+    return "未知"
+
+
 class PermissionPageService:
     """权限控制器配置页服务。"""
 
@@ -61,6 +75,7 @@ class PermissionPageService:
             "schema": self.schema,
             "config": config,
             "groups": self._build_configured_groups(config),
+            "system": self._build_system_info(),
         }
 
     async def list_groups(self, force: bool = False) -> list[dict[str, Any]]:
@@ -79,6 +94,26 @@ class PermissionPageService:
         for item in self._build_configured_groups(self._read_current_config()):
             groups.setdefault(item["group_id"], item)
         return self._sort_groups_by_recent_config(groups.values())
+
+    async def list_private_contacts(self, force: bool = False) -> list[dict[str, Any]]:
+        """返回机器人已添加的 QQ 好友列表；失败时回退到 private_chat_users 配置。"""
+        contacts: dict[str, dict[str, Any]] = {}
+        for client in self._iter_qq_clients():
+            try:
+                result = await client.call_action("get_friend_list")
+                for item in self._extract_friend_list(result):
+                    user_id = str(item.get("user_id", "")).strip()
+                    if not user_id or user_id in contacts:
+                        continue
+                    contacts[user_id] = self._normalize_friend_item(item)
+            except Exception as exc:
+                logger.debug("[PermissionController] 获取好友列表失败: %s", exc)
+        for user_id in _normalize_list(self._read_current_config().get("private_chat_users")):
+            contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
+        return sorted(
+            contacts.values(),
+            key=lambda item: str(item.get("nickname") or item.get("remark") or item.get("user_id") or ""),
+        )
 
     def get_group_config(self, group_id: str) -> dict[str, Any]:
         """把全局配置映射成单群配置页需要的数据。"""
@@ -160,6 +195,38 @@ class PermissionPageService:
         """清空单群放行和该群用户规则。"""
         return self.update_group_config(group_id, {"group_enabled": False, "allowed_users": [], "denied_users": []})
 
+    def get_private_contact_config(self, user_id: str) -> dict[str, Any]:
+        """返回单个私聊好友的权限配置。"""
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            raise ValueError("user_id must not be empty")
+        config = self._read_current_config()
+        enabled_users = set(_normalize_list(config.get("private_chat_users")))
+        return {
+            "contact_info": self._build_friend_info(user_id),
+            "config": {"private_enabled": user_id in enabled_users},
+        }
+
+    def update_private_contact_config(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """保存单个好友私聊权限到 private_chat_users。"""
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            raise ValueError("user_id must not be empty")
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+        config = self._read_current_config()
+        enabled_users = set(_normalize_list(config.get("private_chat_users")))
+        if _parse_bool(payload.get("private_enabled")):
+            enabled_users.add(user_id)
+        else:
+            enabled_users.discard(user_id)
+        self._write_config({"private_chat_users": sorted(enabled_users)})
+        return self.get_private_contact_config(user_id)
+
+    def reset_private_contact_config(self, user_id: str) -> dict[str, Any]:
+        """关闭单个好友私聊权限。"""
+        return self.update_private_contact_config(user_id, {"private_enabled": False})
+
     def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """根据前端提交的扁平 key->value，按 schema 清洗并写回配置文件。"""
         if not isinstance(payload, dict):
@@ -222,6 +289,43 @@ class PermissionPageService:
                 return [item for item in data if isinstance(item, dict)]
         return []
 
+    @staticmethod
+    def _extract_friend_list(result: Any) -> list[dict[str, Any]]:
+        if isinstance(result, list):
+            return [item for item in result if isinstance(item, dict)]
+        if isinstance(result, dict):
+            data = result.get("data")
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+        return []
+
+    def _build_friend_info(self, user_id: str, source: str = "fallback") -> dict[str, Any]:
+        user_id = str(user_id).strip()
+        return {
+            "user_id": user_id,
+            "nickname": f"好友 {user_id}",
+            "remark": "",
+            "avatar": f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640",
+            "source": source,
+            "private_enabled": user_id in set(_normalize_list(self._read_current_config().get("private_chat_users"))),
+        }
+
+    def _normalize_friend_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        user_id = str(item.get("user_id", "")).strip()
+        normalized = self._build_friend_info(user_id, source="live")
+        nickname = str(item.get("nickname", "")).strip()
+        remark = str(item.get("remark", "")).strip()
+        normalized.update({"nickname": remark or nickname or f"好友 {user_id}", "remark": remark})
+        return normalized
+
+    def _build_system_info(self) -> dict[str, str]:
+        return {
+            "platform": platform.system() or "Unknown",
+            "platform_release": platform.release() or "",
+            "python": platform.python_version() or sys.version.split()[0],
+            "astrbot": _get_astrbot_version(),
+        }
+
     def _build_configured_groups(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         group_ids = set(_normalize_list(config.get("allowed_groups")))
         for key in ("simple_rules", "group_deny_rules"):
@@ -236,6 +340,7 @@ class PermissionPageService:
 
     def _build_group_info(self, group_id: str, source: str = "fallback") -> dict[str, Any]:
         group_id = str(group_id).strip()
+        config = self._read_current_config()
         touched_at = self._group_config_touch_times().get(group_id, 0)
         return {
             "group_id": group_id,
@@ -245,6 +350,7 @@ class PermissionPageService:
             "max_member_count": 0,
             "source": source,
             "config_updated_at": touched_at,
+            "group_enabled": group_id in set(_normalize_list(config.get("allowed_groups"))),
         }
 
     def _normalize_group_item(self, item: dict[str, Any]) -> dict[str, Any]:

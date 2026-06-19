@@ -11,7 +11,10 @@ const GROUP_TOUCH_STORAGE_KEY = "permission-controller-group-touch-times";
 
 let api = null;
 let groups = [];
+let privateContacts = [];
 let currentGroup = null;
+let currentPrivateContact = null;
+const contactSectionCollapsed = { groups: true, privates: true };
 let themePreference = loadThemePreference();
 
 const els = {
@@ -25,6 +28,14 @@ const els = {
   refreshGroupsBtn: document.getElementById("refreshGroupsBtn"),
   resetGroupBtn: document.getElementById("resetGroupBtn"),
   saveGroupBtn: document.getElementById("saveGroupBtn"),
+  groupCountLabel: document.getElementById("groupCountLabel"),
+  privateCountLabel: document.getElementById("privateCountLabel"),
+  currentTimeLabel: document.getElementById("currentTimeLabel"),
+  currentDateLabel: document.getElementById("currentDateLabel"),
+  systemVersionLabel: document.getElementById("systemVersionLabel"),
+  pythonVersionLabel: document.getElementById("pythonVersionLabel"),
+  weatherLabel: document.getElementById("weatherLabel"),
+  weatherMetaLabel: document.getElementById("weatherMetaLabel"),
 };
 
 function isValidThemePreference(value) {
@@ -145,6 +156,73 @@ function themeButtonLabel() {
   return "主题：自动";
 }
 
+function updateClock() {
+  const now = new Date();
+  if (els.currentTimeLabel) {
+    els.currentTimeLabel.textContent = now.toLocaleTimeString("zh-CN", { hour12: false });
+  }
+  if (els.currentDateLabel) {
+    els.currentDateLabel.textContent = now.toLocaleDateString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+    });
+  }
+}
+
+function applySystemInfo(system = {}) {
+  const platformText = [system.platform, system.platform_release].filter(Boolean).join(" ") || "未知系统";
+  if (els.systemVersionLabel) els.systemVersionLabel.textContent = platformText;
+  if (els.pythonVersionLabel) {
+    els.pythonVersionLabel.textContent = `Python ${system.python || "--"} · AstrBot ${system.astrbot || "未知"}`;
+  }
+}
+
+function weatherCodeText(code) {
+  const map = {
+    0: "晴", 1: "多云", 2: "多云", 3: "阴",
+    45: "雾", 48: "雾凇",
+    51: "小毛毛雨", 53: "毛毛雨", 55: "大毛毛雨",
+    61: "小雨", 63: "中雨", 65: "大雨",
+    71: "小雪", 73: "中雪", 75: "大雪",
+    80: "阵雨", 81: "阵雨", 82: "强阵雨",
+    95: "雷暴", 96: "雷暴冰雹", 99: "强雷暴冰雹",
+  };
+  return map[Number(code)] || "天气";
+}
+
+async function fetchWeather(latitude, longitude) {
+  const data = await api.safeGet("settings/weather", { latitude, longitude });
+  if (typeof data.temperature !== "number") throw new Error("天气数据为空");
+  if (els.weatherLabel) els.weatherLabel.textContent = `${weatherCodeText(data.weather_code)} ${Math.round(data.temperature)}℃`;
+  if (els.weatherMetaLabel) els.weatherMetaLabel.textContent = data.time ? `更新时间：${data.time}` : "已通过浏览器定位获取";
+}
+
+function loadLocationWeather() {
+  if (!els.weatherLabel || !els.weatherMetaLabel) return;
+  if (!navigator.geolocation) {
+    els.weatherLabel.textContent = "定位不可用";
+    els.weatherMetaLabel.textContent = "浏览器不支持定位";
+    return;
+  }
+  els.weatherLabel.textContent = "定位中";
+  els.weatherMetaLabel.textContent = "等待定位授权";
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      fetchWeather(position.coords.latitude, position.coords.longitude).catch((err) => {
+        els.weatherLabel.textContent = "天气获取失败";
+        els.weatherMetaLabel.textContent = err.message || "请稍后重试";
+      });
+    },
+    () => {
+      els.weatherLabel.textContent = "未开启定位";
+      els.weatherMetaLabel.textContent = "开启浏览器定位后显示天气";
+    },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 10 * 60 * 1000 },
+  );
+}
+
 function applyTheme() {
   let effective = themePreference;
   if (effective === "auto") {
@@ -182,69 +260,222 @@ function normalizeListText(value) {
     .filter(Boolean);
 }
 
+function privateContactsFromConfig(config) {
+  return normalizeListText(config?.private_chat_users || "").map((userId) => ({
+    user_id: userId,
+    nickname: `好友 ${userId}`,
+    remark: "",
+    avatar: `https://q1.qlogo.cn/g?b=qq&nk=${userId}&s=640`,
+    source: "configured",
+  }));
+}
+
+async function refreshPrivateContacts(options = {}) {
+  try {
+    privateContacts = await api.safePost("settings/private/refresh", {});
+  } catch (err) {
+    if (!options.fallbackConfig) throw err;
+    privateContacts = privateContactsFromConfig(options.fallbackConfig);
+  }
+}
+
+function updateContactCounters() {
+  if (els.groupCountLabel) els.groupCountLabel.textContent = String(groups.length || 0);
+  if (els.privateCountLabel) els.privateCountLabel.textContent = String(privateContacts.length || 0);
+}
+
+function createEmptyNode(text) {
+  const node = document.createElement("div");
+  node.className = "group-empty";
+  node.textContent = text;
+  return node;
+}
+
+function makeSection(key, title, count, body, collapsed = true) {
+  const section = document.createElement("section");
+  const isCollapsed = contactSectionCollapsed[key] ?? collapsed;
+  section.className = `contact-section${isCollapsed ? " collapsed" : ""}`;
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "contact-section-head";
+  head.innerHTML = `<span>${title}</span><b>${count}</b>`;
+  const content = document.createElement("div");
+  content.className = "contact-section-body";
+  content.appendChild(body);
+  head.addEventListener("click", () => {
+    section.classList.toggle("collapsed");
+    contactSectionCollapsed[key] = section.classList.contains("collapsed");
+  });
+  section.append(head, content);
+  return section;
+}
+
+async function selectPrivateContact(contact) {
+  const userId = String(contact?.user_id || "").trim();
+  if (!userId) return;
+  try {
+    const data = await api.safeGet("settings/private", { user_id: userId });
+    renderPrivateContactForm({ ...data, contact_info: { ...(data.contact_info || {}), ...contact } });
+  } catch (err) {
+    toast("加载私聊配置失败：" + err.message, "error");
+  }
+}
+
+function renderPrivateContactForm(payload) {
+  const info = payload.contact_info || {};
+  const config = payload.config || {};
+  currentPrivateContact = { ...info, config };
+  currentGroup = null;
+  els.groupForm.closest(".group-config-panel")?.classList.remove("is-welcome-mode");
+  els.currentGroupTitle.textContent = info.nickname || info.remark || `好友 ${info.user_id || ""}`;
+  els.currentGroupMeta.textContent = info.user_id ? `QQ：${info.user_id}` : "私聊好友配置";
+  els.groupForm.innerHTML = "";
+  els.groupForm.classList.remove("empty-state");
+  if (els.resetGroupBtn) els.resetGroupBtn.textContent = "关闭私聊权限";
+  if (els.saveGroupBtn) els.saveGroupBtn.textContent = "保存私聊配置";
+
+  const overview = document.createElement("div");
+  overview.className = "policy-overview";
+  overview.innerHTML = `
+    <div class="metric-card ${config.private_enabled ? "is-on" : "is-off"}">
+      <span class="metric-label">私聊权限</span>
+      <strong>${config.private_enabled ? "已开启" : "未开启"}</strong>
+      <em>${config.private_enabled ? "该好友可私聊调用机器人" : "该好友私聊会被拦截"}</em>
+    </div>
+  `;
+
+  const accessCard = document.createElement("section");
+  accessCard.className = "group-card policy-card";
+  accessCard.innerHTML = `
+    <div class="group-card-head">
+      <div>
+        <span class="section-index">01</span>
+        <h3>私聊权限</h3>
+        <p class="group-card-hint">控制该好友是否可以在私聊中调用机器人。</p>
+      </div>
+    </div>
+    <button class="field field-bool feature-toggle-card ${config.private_enabled ? "is-selected" : ""}" id="privateEnabledPanel" type="button" aria-pressed="${config.private_enabled ? "true" : "false"}">
+      <input id="privateEnabledInput" type="hidden" value="${config.private_enabled ? "true" : "false"}" />
+      <div>
+        <div class="field-label">开启私聊权限</div>
+        <div class="field-hint">点击切换。选中后该好友可通过私聊调用机器人。</div>
+      </div>
+      <span class="policy-state-badge">${config.private_enabled ? "已开启" : "未开启"}</span>
+    </button>
+  `;
+  const privateEnabledPanel = accessCard.querySelector("#privateEnabledPanel");
+  const privateEnabledInput = accessCard.querySelector("#privateEnabledInput");
+  const policyStateBadge = accessCard.querySelector(".policy-state-badge");
+  privateEnabledPanel?.addEventListener("click", () => {
+    const nextEnabled = privateEnabledInput.value !== "true";
+    privateEnabledInput.value = nextEnabled ? "true" : "false";
+    privateEnabledPanel.classList.toggle("is-selected", nextEnabled);
+    privateEnabledPanel.setAttribute("aria-pressed", nextEnabled ? "true" : "false");
+    if (policyStateBadge) policyStateBadge.textContent = nextEnabled ? "已开启" : "未开启";
+  });
+
+  els.groupForm.append(overview, accessCard);
+  renderGroupList();
+}
+
 function renderGroupList() {
   const keyword = String(els.groupSearchInput?.value || "").trim().toLowerCase();
   const visibleGroups = sortGroupsByRecentConfig(groups).filter((group) => {
     const text = `${group.group_name || ""} ${group.group_id || ""}`.toLowerCase();
     return !keyword || text.includes(keyword);
   });
+  const visiblePrivates = privateContacts.filter((contact) => {
+    const text = `${contact.nickname || ""} ${contact.remark || ""} ${contact.user_id || ""}`.toLowerCase();
+    return !keyword || text.includes(keyword);
+  });
 
+  updateContactCounters();
   els.groupList.innerHTML = "";
+  els.groupList.classList.remove("empty-state");
+
+  const groupBody = document.createElement("div");
   if (!visibleGroups.length) {
-    els.groupList.classList.add("empty-state");
-    els.groupList.textContent = "未找到群聊。请确认机器人已接入 QQ 平台，或先在配置中添加群号。";
-    return;
+    groupBody.appendChild(createEmptyNode("未找到群聊。"));
+  } else {
+    visibleGroups.forEach((group) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "group-item";
+      if (String(currentGroup?.group_info?.group_id || "") === String(group.group_id)) {
+        card.classList.add("active");
+      }
+      card.addEventListener("click", () => loadGroupConfig(group.group_id));
+
+      const avatar = document.createElement("img");
+      avatar.className = "group-avatar";
+      avatar.src = group.avatar || "";
+      avatar.alt = group.group_name || group.group_id;
+      avatar.onerror = () => { avatar.style.display = "none"; };
+
+      const body = document.createElement("span");
+      body.className = "group-item-body";
+      const name = document.createElement("span");
+      name.className = "group-name";
+      name.textContent = group.group_name || `群 ${group.group_id}`;
+      const meta = document.createElement("span");
+      meta.className = "group-meta";
+      meta.textContent = `策略：${group.group_enabled ? "整群放行" : "群组细化"}`;
+      body.append(name, meta);
+      card.append(avatar, body);
+      groupBody.appendChild(card);
+    });
   }
 
-  els.groupList.classList.remove("empty-state");
-  visibleGroups.forEach((group) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "group-item";
-    if (String(currentGroup?.group_info?.group_id || "") === String(group.group_id)) {
-      card.classList.add("active");
-    }
-    card.addEventListener("click", () => loadGroupConfig(group.group_id));
+  const privateBody = document.createElement("div");
+  if (!visiblePrivates.length) {
+    privateBody.appendChild(createEmptyNode("未获取到好友列表。"));
+  } else {
+    visiblePrivates.forEach((contact) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "group-item private-item";
+      if (currentPrivateContact?.user_id === contact.user_id) card.classList.add("active");
+      card.addEventListener("click", () => selectPrivateContact(contact).catch((err) => toast(err.message, "error")));
+      const avatar = document.createElement("img");
+      avatar.className = "group-avatar";
+      avatar.src = contact.avatar || "";
+      avatar.alt = contact.nickname || contact.user_id;
+      avatar.onerror = () => { avatar.style.display = "none"; };
+      const body = document.createElement("span");
+      body.className = "group-item-body";
+      const name = document.createElement("span");
+      name.className = "group-name";
+      name.textContent = contact.nickname || contact.remark || `好友 ${contact.user_id}`;
+      const meta = document.createElement("span");
+      meta.className = "group-meta";
+      meta.textContent = `策略：${contact.private_enabled ? "私聊放行" : "私聊关闭"}`;
+      body.append(name, meta);
+      card.append(avatar, body);
+      privateBody.appendChild(card);
+    });
+  }
 
-    const avatar = document.createElement("img");
-    avatar.className = "group-avatar";
-    avatar.src = group.avatar || "";
-    avatar.alt = group.group_name || group.group_id;
-    avatar.onerror = () => {
-      avatar.style.display = "none";
-    };
-
-    const body = document.createElement("span");
-    body.className = "group-item-body";
-    const name = document.createElement("span");
-    name.className = "group-name";
-    name.textContent = group.group_name || `群 ${group.group_id}`;
-    const meta = document.createElement("span");
-    meta.className = "group-meta";
-    const touchedAt = groupTouchTime(group);
-    meta.textContent = touchedAt
-      ? `群号：${group.group_id} · 最近配置：${new Date(touchedAt).toLocaleString()}`
-      : `群号：${group.group_id}`;
-    body.appendChild(name);
-    body.appendChild(meta);
-
-    card.appendChild(avatar);
-    card.appendChild(body);
-    els.groupList.appendChild(card);
-  });
+  els.groupList.append(
+    makeSection("groups", "群聊", groups.length, groupBody, true),
+    makeSection("privates", "私聊", privateContacts.length, privateBody, true),
+  );
 }
 
 function renderGroupForm(payload) {
   currentGroup = payload;
+  currentPrivateContact = null;
   const info = payload.group_info || {};
   const config = payload.config || {};
   const allowedUsers = Array.isArray(config.allowed_users) ? config.allowed_users : [];
   const deniedUsers = Array.isArray(config.denied_users) ? config.denied_users : [];
-  els.currentGroupTitle.textContent = info.group_name || `群 ${info.group_id || ""}`;
-  els.currentGroupMeta.textContent = info.group_id ? `群号：${info.group_id}` : "请选择左侧群聊";
+  els.groupForm.closest(".group-config-panel")?.classList.remove("is-welcome-mode");
+  els.currentGroupTitle.textContent = info.group_name || "未命名群聊";
+  els.currentGroupMeta.textContent = info.group_name ? "群聊配置" : "请选择左侧群聊";
 
   els.groupForm.innerHTML = "";
   els.groupForm.classList.remove("empty-state");
+  if (els.resetGroupBtn) els.resetGroupBtn.textContent = "清空该群配置";
+  if (els.saveGroupBtn) els.saveGroupBtn.textContent = "保存群聊配置";
 
   const overview = document.createElement("div");
   overview.className = "policy-overview";
@@ -276,17 +507,26 @@ function renderGroupForm(payload) {
         <p class="group-card-hint">决定该群是整体开放，还是只允许指定成员调用机器人。</p>
       </div>
     </div>
-    <div class="field field-bool feature-toggle-card">
+    <button class="field field-bool feature-toggle-card ${config.group_enabled ? "is-selected" : ""}" id="groupEnabledPanel" type="button" aria-pressed="${config.group_enabled ? "true" : "false"}">
+      <input id="groupEnabledInput" type="hidden" value="${config.group_enabled ? "true" : "false"}" />
       <div>
         <div class="field-label">整群放行</div>
-        <div class="field-hint">开启后，该群所有成员都可调用机器人；关闭后仅“本群允许用户”可以调用。</div>
+        <div class="field-hint">点击切换。选中后该群所有成员都可调用机器人；未选中则仅允许用户可调用。</div>
       </div>
-      <label class="switch">
-        <input id="groupEnabledInput" type="checkbox" ${config.group_enabled ? "checked" : ""} />
-        <span class="switch-slider"></span>
-      </label>
-    </div>
+      <span class="policy-state-badge">${config.group_enabled ? "已开启" : "未开启"}</span>
+    </button>
   `;
+
+  const groupEnabledPanel = accessCard.querySelector("#groupEnabledPanel");
+  const groupEnabledInput = accessCard.querySelector("#groupEnabledInput");
+  const policyStateBadge = accessCard.querySelector(".policy-state-badge");
+  groupEnabledPanel?.addEventListener("click", () => {
+    const nextEnabled = groupEnabledInput.value !== "true";
+    groupEnabledInput.value = nextEnabled ? "true" : "false";
+    groupEnabledPanel.classList.toggle("is-selected", nextEnabled);
+    groupEnabledPanel.setAttribute("aria-pressed", nextEnabled ? "true" : "false");
+    if (policyStateBadge) policyStateBadge.textContent = nextEnabled ? "已开启" : "未开启";
+  });
 
   const allowCard = document.createElement("section");
   allowCard.className = "group-card policy-card allow-card";
@@ -301,7 +541,7 @@ function renderGroupForm(payload) {
     </div>
     <div class="field list-field">
       <div class="field-label">白名单列表</div>
-      <textarea id="allowedUsersInput" rows="9" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
+      <textarea id="allowedUsersInput" rows="5" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
     </div>
   `;
   allowCard.querySelector("textarea").value = allowedUsers.join("\n");
@@ -319,10 +559,14 @@ function renderGroupForm(payload) {
     </div>
     <div class="field list-field">
       <div class="field-label">黑名单列表</div>
-      <textarea id="deniedUsersInput" rows="9" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
+      <textarea id="deniedUsersInput" rows="5" spellcheck="false" placeholder="例如：\n123456789\n987654321"></textarea>
     </div>
   `;
   denyCard.querySelector("textarea").value = deniedUsers.join("\n");
+
+  const listPair = document.createElement("div");
+  listPair.className = "list-card-pair";
+  listPair.append(allowCard, denyCard);
 
   const ruleCard = document.createElement("section");
   ruleCard.className = "group-card rule-card";
@@ -342,53 +586,110 @@ function renderGroupForm(payload) {
 
   els.groupForm.appendChild(overview);
   els.groupForm.appendChild(accessCard);
-  els.groupForm.appendChild(allowCard);
-  els.groupForm.appendChild(denyCard);
+  els.groupForm.appendChild(listPair);
   els.groupForm.appendChild(ruleCard);
   renderGroupList();
 }
 
 function collectGroupForm() {
   return {
-    group_enabled: Boolean(document.getElementById("groupEnabledInput")?.checked),
+    group_enabled: document.getElementById("groupEnabledInput")?.value === "true",
     allowed_users: normalizeListText(document.getElementById("allowedUsersInput")?.value),
     denied_users: normalizeListText(document.getElementById("deniedUsersInput")?.value),
   };
 }
 
+function collectPrivateContactForm() {
+  return {
+    private_enabled: document.getElementById("privateEnabledInput")?.value === "true",
+  };
+}
+
+function renderWelcomePanel() {
+  currentGroup = null;
+  currentPrivateContact = null;
+  els.groupForm.closest(".group-config-panel")?.classList.add("is-welcome-mode");
+  els.currentGroupTitle.textContent = "请选择配置对象";
+  els.currentGroupMeta.textContent = "从左侧选择群聊或私聊好友开始配置";
+  if (els.resetGroupBtn) els.resetGroupBtn.textContent = "清空配置";
+  if (els.saveGroupBtn) els.saveGroupBtn.textContent = "保存配置";
+  els.groupForm.classList.remove("empty-state");
+  els.groupForm.innerHTML = `
+    <div class="welcome-panel">
+      <span class="welcome-badge">Permission Center</span>
+      <h2>选一个群或好友，开始调校权限</h2>
+      <p>群聊可配置整群放行、允许用户和拒绝用户；私聊好友可单独开启或关闭私聊权限。</p>
+    </div>
+  `;
+  renderGroupList();
+}
+
 async function loadBootstrap() {
   els.groupList.classList.add("empty-state");
-  els.groupList.textContent = "群列表同步中…";
-  els.groupForm.classList.add("empty-state");
-  els.groupForm.textContent = "请从左侧选择一个群聊。";
+  els.groupList.textContent = "群聊/私聊列表同步中…";
+  renderWelcomePanel();
   try {
-    await refreshGroups({ silent: true });
+    const data = await api.safeGet("settings/bootstrap");
+    applySystemInfo(data.system || {});
+    await Promise.all([
+      refreshGroups({ silent: true }),
+      refreshPrivateContacts({ fallbackConfig: data.config || {} }),
+    ]);
   } catch (err) {
     const data = await api.safeGet("settings/bootstrap");
+    applySystemInfo(data.system || {});
     groups = data.groups || [];
+    privateContacts = privateContactsFromConfig(data.config || {});
     renderGroupList();
     toast("同步群列表失败，已使用缓存配置：" + err.message, "error");
   }
-  const firstGroup = sortGroupsByRecentConfig(groups)[0];
-  if (firstGroup) {
-    await loadGroupConfig(firstGroup.group_id);
-  }
+  renderWelcomePanel();
 }
 
 async function refreshGroups(options = {}) {
-  groups = await api.safePost("settings/groups/refresh", {});
+  const [nextGroups] = await Promise.all([
+    api.safePost("settings/groups/refresh", {}),
+    refreshPrivateContacts({ fallbackConfig: options.fallbackConfig || null }).catch((err) => {
+      if (!options.silent) toast("好友列表同步失败：" + err.message, "error");
+    }),
+  ]);
+  groups = nextGroups;
   renderGroupList();
-  if (!options.silent) toast("群列表已同步", "success");
+  if (!options.silent) toast("群聊/好友列表已同步", "success");
 }
 
 async function loadGroupConfig(groupId) {
   const target = String(groupId || "").trim();
   if (!target) return;
   const data = await api.safeGet("settings/group", { group_id: target });
+  const listInfo = groups.find((group) => String(group.group_id) === target);
+  if (listInfo) {
+    data.group_info = { ...(data.group_info || {}), ...listInfo };
+  }
   renderGroupForm(data);
 }
 
 async function saveGroupConfig() {
+  const privateUserId = String(currentPrivateContact?.user_id || "").trim();
+  if (privateUserId) {
+    els.saveGroupBtn.disabled = true;
+    try {
+      const data = await api.safePost("settings/private", {
+        user_id: privateUserId,
+        config: collectPrivateContactForm(),
+      });
+      const currentInfo = currentPrivateContact || {};
+      renderPrivateContactForm({ ...data, contact_info: { ...(data.contact_info || {}), ...currentInfo } });
+      await refreshGroups({ silent: true });
+      toast("私聊配置已保存", "success");
+    } catch (err) {
+      toast("保存失败：" + err.message, "error");
+    } finally {
+      els.saveGroupBtn.disabled = false;
+    }
+    return;
+  }
+
   const groupId = String(currentGroup?.group_info?.group_id || "").trim();
   if (!groupId) {
     toast("请先选择群聊", "error");
@@ -412,6 +713,24 @@ async function saveGroupConfig() {
 }
 
 async function resetGroupConfig() {
+  const privateUserId = String(currentPrivateContact?.user_id || "").trim();
+  if (privateUserId) {
+    if (!window.confirm("确定关闭该好友的私聊权限吗？")) return;
+    els.resetGroupBtn.disabled = true;
+    try {
+      const data = await api.safePost("settings/private/reset", { user_id: privateUserId });
+      const currentInfo = currentPrivateContact || {};
+      renderPrivateContactForm({ ...data, contact_info: { ...(data.contact_info || {}), ...currentInfo } });
+      await refreshGroups({ silent: true });
+      toast("私聊配置已重置", "success");
+    } catch (err) {
+      toast("重置失败：" + err.message, "error");
+    } finally {
+      els.resetGroupBtn.disabled = false;
+    }
+    return;
+  }
+
   const groupId = String(currentGroup?.group_info?.group_id || "").trim();
   if (!groupId) {
     toast("请先选择群聊", "error");
@@ -453,6 +772,8 @@ function bindEvents() {
 function init() {
   applyTheme();
   bindEvents();
+  updateClock();
+  window.setInterval(updateClock, 1000);
   if (!bridge) {
     els.groupForm.textContent = "无法获取 AstrBot 页面桥接（window.AstrBotPluginPage）。";
     els.groupForm.classList.add("empty-state");
@@ -460,6 +781,7 @@ function init() {
   }
   try {
     api = createApi(bridge);
+    loadLocationWeather();
   } catch (err) {
     els.groupForm.textContent = "初始化失败：" + err.message;
     return;
