@@ -16,6 +16,13 @@ let currentGroup = null;
 let currentPrivateContact = null;
 const contactSectionCollapsed = { groups: true, privates: true };
 let themePreference = loadThemePreference();
+const REASONING_OPTIONS = [
+  ["", "默认"],
+  ["low", "低"],
+  ["medium", "中"],
+  ["high", "高"],
+  ["ultra", "超高"],
+];
 
 const els = {
   groupList: document.getElementById("groupList"),
@@ -260,13 +267,42 @@ function normalizeListText(value) {
     .filter(Boolean);
 }
 
+function reasoningLabel(value) {
+  const normalized = String(value || "").trim();
+  return REASONING_OPTIONS.find(([key]) => key === normalized)?.[1] || "默认";
+}
+
+function createReasoningSelect(id, value) {
+  const select = document.createElement("select");
+  select.id = id;
+  select.className = "reasoning-select";
+  const current = String(value || "").trim();
+  REASONING_OPTIONS.forEach(([optionValue, label]) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = label;
+    option.selected = optionValue === current;
+    select.appendChild(option);
+  });
+  return select;
+}
+
 function privateContactsFromConfig(config) {
-  return normalizeListText(config?.private_chat_users || "").map((userId) => ({
+  const enabledUsers = new Set(normalizeListText(config?.private_chat_users || ""));
+  const reasoningMap = new Map();
+  normalizeListText(config?.reasoning_private_users || "").forEach((item) => {
+    const [userId, effort = ""] = item.split(/[=：:]/, 2).map((part) => part.trim());
+    if (userId) reasoningMap.set(userId, effort);
+  });
+  const userIds = new Set([...enabledUsers, ...reasoningMap.keys()]);
+  return [...userIds].map((userId) => ({
     user_id: userId,
     nickname: `好友 ${userId}`,
     remark: "",
     avatar: `https://q1.qlogo.cn/g?b=qq&nk=${userId}&s=640`,
     source: "configured",
+    private_enabled: enabledUsers.has(userId),
+    reasoning_effort: reasoningMap.get(userId) || "",
   }));
 }
 
@@ -342,6 +378,11 @@ function renderPrivateContactForm(payload) {
       <strong>${config.private_enabled ? "已开启" : "未开启"}</strong>
       <em>${config.private_enabled ? "该好友可私聊调用机器人" : "该好友私聊会被拦截"}</em>
     </div>
+    <div class="metric-card">
+      <span class="metric-label">思考强度</span>
+      <strong>${reasoningLabel(config.reasoning_effort)}</strong>
+      <em>${config.reasoning_effort ? "本好友私聊单独生效" : "保持模型默认"}</em>
+    </div>
   `;
 
   const accessCard = document.createElement("section");
@@ -374,7 +415,26 @@ function renderPrivateContactForm(payload) {
     if (policyStateBadge) policyStateBadge.textContent = nextEnabled ? "已开启" : "未开启";
   });
 
-  els.groupForm.append(overview, accessCard);
+  const reasoningCard = document.createElement("section");
+  reasoningCard.className = "group-card policy-card reasoning-card";
+  reasoningCard.innerHTML = `
+    <div class="group-card-head">
+      <div>
+        <span class="section-index">02</span>
+        <h3>私聊思考强度</h3>
+        <p class="group-card-hint">只影响该好友私聊机器人时的本次模型请求。</p>
+      </div>
+    </div>
+    <div class="field field-select">
+      <div class="field-label">思考强度</div>
+      <div class="field-hint">默认表示不注入 reasoning_effort，保持模型服务商原始设置。</div>
+    </div>
+  `;
+  reasoningCard.querySelector(".field-select")?.appendChild(
+    createReasoningSelect("privateReasoningEffortInput", config.reasoning_effort),
+  );
+
+  els.groupForm.append(overview, accessCard, reasoningCard);
   renderGroupList();
 }
 
@@ -419,7 +479,8 @@ function renderGroupList() {
       name.textContent = group.group_name || `群 ${group.group_id}`;
       const meta = document.createElement("span");
       meta.className = "group-meta";
-      meta.textContent = `策略：${group.group_enabled ? "整群放行" : "群组细化"}`;
+      const reasoningText = group.reasoning_effort ? ` · 思考：${reasoningLabel(group.reasoning_effort)}` : "";
+      meta.textContent = `策略：${group.group_enabled ? "整群放行" : "群组细化"}${reasoningText}`;
       body.append(name, meta);
       card.append(avatar, body);
       groupBody.appendChild(card);
@@ -448,7 +509,8 @@ function renderGroupList() {
       name.textContent = contact.nickname || contact.remark || `好友 ${contact.user_id}`;
       const meta = document.createElement("span");
       meta.className = "group-meta";
-      meta.textContent = `策略：${contact.private_enabled ? "私聊放行" : "私聊关闭"}`;
+      const reasoningText = contact.reasoning_effort ? ` · 思考：${reasoningLabel(contact.reasoning_effort)}` : "";
+      meta.textContent = `策略：${contact.private_enabled ? "私聊放行" : "私聊关闭"}${reasoningText}`;
       body.append(name, meta);
       card.append(avatar, body);
       privateBody.appendChild(card);
@@ -468,6 +530,7 @@ function renderGroupForm(payload) {
   const config = payload.config || {};
   const allowedUsers = Array.isArray(config.allowed_users) ? config.allowed_users : [];
   const deniedUsers = Array.isArray(config.denied_users) ? config.denied_users : [];
+  const reasoningUserRules = Array.isArray(config.reasoning_user_rules) ? config.reasoning_user_rules : [];
   els.groupForm.closest(".group-config-panel")?.classList.remove("is-welcome-mode");
   els.currentGroupTitle.textContent = info.group_name || "未命名群聊";
   els.currentGroupMeta.textContent = info.group_name ? "群聊配置" : "请选择左侧群聊";
@@ -494,6 +557,11 @@ function renderGroupForm(payload) {
       <span class="metric-label">拒绝用户</span>
       <strong>${deniedUsers.length}</strong>
       <em>黑名单条目</em>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">思考强度</span>
+      <strong>${reasoningLabel(config.reasoning_effort)}</strong>
+      <em>${reasoningUserRules.length ? `${reasoningUserRules.length} 条成员覆盖` : "群默认规则"}</em>
     </div>
   `;
 
@@ -568,11 +636,38 @@ function renderGroupForm(payload) {
   listPair.className = "list-card-pair";
   listPair.append(allowCard, denyCard);
 
+  const reasoningCard = document.createElement("section");
+  reasoningCard.className = "group-card policy-card reasoning-card";
+  reasoningCard.innerHTML = `
+    <div class="group-card-head split-head">
+      <div>
+        <span class="section-index">04</span>
+        <h3>模型思考强度</h3>
+        <p class="group-card-hint">群默认强度适用于该群，成员覆盖规则优先级更高。</p>
+      </div>
+      <span class="count-badge">${reasoningUserRules.length} 条覆盖</span>
+    </div>
+    <div class="reasoning-grid">
+      <div class="field field-select">
+        <div class="field-label">本群默认强度</div>
+        <div class="field-hint">默认表示不注入 reasoning_effort，保持模型服务商原始设置。</div>
+      </div>
+      <div class="field list-field">
+        <div class="field-label">成员覆盖规则</div>
+        <textarea id="reasoningUsersInput" rows="5" spellcheck="false" placeholder="例如：\n123456789=超高\n987654321=低"></textarea>
+      </div>
+    </div>
+  `;
+  reasoningCard.querySelector(".field-select")?.appendChild(
+    createReasoningSelect("groupReasoningEffortInput", config.reasoning_effort),
+  );
+  reasoningCard.querySelector("textarea").value = reasoningUserRules.join("\n");
+
   const ruleCard = document.createElement("section");
   ruleCard.className = "group-card rule-card";
   ruleCard.innerHTML = `
     <div class="group-card-head">
-      <span class="section-index">04</span>
+      <span class="section-index">05</span>
       <h3>判定优先级</h3>
       <p class="group-card-hint">规则从上到下匹配，拒绝名单优先级最高。</p>
     </div>
@@ -587,6 +682,7 @@ function renderGroupForm(payload) {
   els.groupForm.appendChild(overview);
   els.groupForm.appendChild(accessCard);
   els.groupForm.appendChild(listPair);
+  els.groupForm.appendChild(reasoningCard);
   els.groupForm.appendChild(ruleCard);
   renderGroupList();
 }
@@ -596,12 +692,15 @@ function collectGroupForm() {
     group_enabled: document.getElementById("groupEnabledInput")?.value === "true",
     allowed_users: normalizeListText(document.getElementById("allowedUsersInput")?.value),
     denied_users: normalizeListText(document.getElementById("deniedUsersInput")?.value),
+    reasoning_effort: document.getElementById("groupReasoningEffortInput")?.value || "",
+    reasoning_user_rules: normalizeListText(document.getElementById("reasoningUsersInput")?.value),
   };
 }
 
 function collectPrivateContactForm() {
   return {
     private_enabled: document.getElementById("privateEnabledInput")?.value === "true",
+    reasoning_effort: document.getElementById("privateReasoningEffortInput")?.value || "",
   };
 }
 

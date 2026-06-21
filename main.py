@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from sys import maxsize
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.platform.message_type import MessageType
@@ -19,7 +20,42 @@ try:
 except Exception:  # pragma: no cover - web 模块缺失时不影响核心功能
     PermissionWebController = None
 
-logger = logging.getLogger(__name__)
+REASONING_EVENT_EXTRA_KEY = "_permission_controller_reasoning_extra_body"
+REASONING_EVENT_LEVEL_KEY = "_permission_controller_reasoning_level"
+REASONING_PROVIDER_META_KEY = "_permission_controller_reasoning_runtime_meta"
+REASONING_PAYLOAD_PATCH_VERSION = "20260621_custom_extra_body_v6_quiet"
+
+REASONING_LEVEL_LABELS = {
+    "": "默认",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "ultra": "超高",
+}
+
+REASONING_LEVEL_ALIASES = {
+    "": "",
+    "default": "",
+    "默认": "",
+    "不设置": "",
+    "关闭": "",
+    "低": "low",
+    "low": "low",
+    "l": "low",
+    "中": "medium",
+    "medium": "medium",
+    "mid": "medium",
+    "m": "medium",
+    "高": "high",
+    "high": "high",
+    "h": "high",
+    "超高": "ultra",
+    "最高": "ultra",
+    "ultra": "ultra",
+    "max": "ultra",
+    "maximum": "ultra",
+}
+
 
 class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     """屏蔽权限控制器场景下的 after_message_sent 终止传播冗余日志。"""
@@ -43,7 +79,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "按 用户QQ-群号/群号列表 限制谁能调用模型/机器人",
-    "1.9.3",
+    "2.1.0",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
@@ -58,6 +94,7 @@ class GroupUserWhitelistPlugin(Star):
     _after_message_sent_log_filter = _AstrBotAfterMessageSentLogFilter()
     _admin_wake_bypass_patch_installed = False
     _whitelist_stage_patch_installed = False
+    _reasoning_payload_patch_installed = False
 
     def __init__(self, context: Context, config=None):
         """初始化插件配置、规则缓存和运行时兼容补丁。"""
@@ -78,10 +115,23 @@ class GroupUserWhitelistPlugin(Star):
             self._cfg_get("private_chat_users", [])
         )
         self.allowed_groups = self._normalize_ids(self._cfg_get("allowed_groups", []))
+        self.reasoning_default_effort = self._normalize_reasoning_effort(
+            self._cfg_get("reasoning_default_effort", "")
+        )
+        self.reasoning_group_defaults = self._load_reasoning_rules(
+            "reasoning_group_defaults"
+        )
+        self.reasoning_group_user_rules = self._load_reasoning_rules(
+            "reasoning_group_user_rules"
+        )
+        self.reasoning_private_users = self._load_reasoning_rules(
+            "reasoning_private_users"
+        )
         self._sync_plugin_allowlist_to_platform_whitelist()
         self._install_after_message_sent_log_filter()
         self._install_admin_wake_bypass_patch()
         self._install_private_whitelist_stage_patch()
+        self._install_reasoning_payload_patch()
         logger.info(
             "[PermissionController] 已加载：群聊规则=%s，群整体放行=%s，用户群号规则=%s，私聊白名单=%s，群聊黑名单=%s，管理员绕过=%s",
             self.enable_group_rules,
@@ -121,6 +171,18 @@ class GroupUserWhitelistPlugin(Star):
             self._cfg_get("private_chat_users", [])
         )
         self.allowed_groups = self._normalize_ids(self._cfg_get("allowed_groups", []))
+        self.reasoning_default_effort = self._normalize_reasoning_effort(
+            self._cfg_get("reasoning_default_effort", "")
+        )
+        self.reasoning_group_defaults = self._load_reasoning_rules(
+            "reasoning_group_defaults"
+        )
+        self.reasoning_group_user_rules = self._load_reasoning_rules(
+            "reasoning_group_user_rules"
+        )
+        self.reasoning_private_users = self._load_reasoning_rules(
+            "reasoning_private_users"
+        )
         try:
             self._sync_plugin_allowlist_to_platform_whitelist()
         except Exception as exc:
@@ -162,6 +224,12 @@ class GroupUserWhitelistPlugin(Star):
         "enable_group_blacklist",
         "group_blacklist",
     }
+    _REASONING_CONFIG_KEYS = {
+        "reasoning_default_effort",
+        "reasoning_group_defaults",
+        "reasoning_group_user_rules",
+        "reasoning_private_users",
+    }
 
     @classmethod
     def _config_group_for_key(cls, key: str) -> str | None:
@@ -169,6 +237,8 @@ class GroupUserWhitelistPlugin(Star):
             return "private_chat_settings"
         if key in cls._GROUP_CONFIG_KEYS:
             return "group_chat_settings"
+        if key in cls._REASONING_CONFIG_KEYS:
+            return "reasoning_settings"
         return None
 
     @classmethod
@@ -438,6 +508,488 @@ class GroupUserWhitelistPlugin(Star):
             return set()
         return {str(item).strip() for item in value if str(item).strip()}
 
+    @classmethod
+    def _normalize_reasoning_effort(cls, value) -> str:
+        """把中英文思考强度归一化为内部枚举。空字符串表示保持默认。"""
+        text = str(value or "").strip()
+        return REASONING_LEVEL_ALIASES.get(
+            text.lower(),
+            REASONING_LEVEL_ALIASES.get(text, ""),
+        )
+
+    @classmethod
+    def _split_reasoning_rule(cls, value) -> tuple[str, str] | None:
+        """解析 `目标=强度` 规则。"""
+        text = str(value or "").strip()
+        if not text:
+            return None
+        for sep in ("=", "：", ":"):
+            if sep in text:
+                target, effort = text.split(sep, 1)
+                target = target.strip()
+                effort = cls._normalize_reasoning_effort(effort)
+                if target:
+                    return target, effort
+                return None
+        return None
+
+    def _load_reasoning_rules(self, config_key: str) -> dict[str, str]:
+        """读取 `目标=强度` 规则表。"""
+        rules: dict[str, str] = {}
+        raw_rules = self._cfg_get(config_key, [])
+        if isinstance(raw_rules, (str, int)):
+            raw_rules = [raw_rules]
+        if not isinstance(raw_rules, list):
+            return rules
+        for item in raw_rules:
+            parsed = self._split_reasoning_rule(item)
+            if not parsed:
+                continue
+            target, effort = parsed
+            if effort:
+                rules[target] = effort
+        return rules
+
+    @staticmethod
+    def _reasoning_extra_body_for_level(level: str) -> dict:
+        """构造一次 LLM 请求要注入的 OpenAI-compatible extra_body。"""
+        if level == "low":
+            return {"reasoning_effort": "low"}
+        if level == "medium":
+            return {"reasoning_effort": "medium"}
+        if level == "high":
+            return {"reasoning_effort": "high"}
+        if level == "ultra":
+            # 标准 OpenAI-compatible 至少会按 high 处理；部分兼容服务会读取 reasoning.effort。
+            return {
+                "reasoning_effort": "high",
+                "reasoning": {"effort": "high"},
+            }
+        return {}
+
+    def _resolve_reasoning_effort(self, event: AstrMessageEvent) -> str:
+        """按 私聊用户 > 群成员 > 群默认 > 全局默认 解析思考强度。"""
+        try:
+            if event.is_private_chat():
+                for candidate in self._private_sender_candidates(event):
+                    effort = self.reasoning_private_users.get(candidate)
+                    if effort:
+                        return effort
+                return self.reasoning_default_effort
+        except Exception:
+            pass
+
+        group_id = str(event.get_group_id() or "").strip()
+        sender_id = str(event.get_sender_id() or "").strip()
+        if group_id and sender_id:
+            effort = self.reasoning_group_user_rules.get(f"{sender_id}-{group_id}")
+            if effort:
+                return effort
+        if group_id:
+            effort = self.reasoning_group_defaults.get(group_id)
+            if effort:
+                return effort
+        return self.reasoning_default_effort
+
+    def _reasoning_event_scope(self, event: AstrMessageEvent) -> str:
+        """生成简短事件来源，方便在 INFO 日志中核对规则是否命中。"""
+        return self._reasoning_event_scope_from_event(event)
+
+    @classmethod
+    def _event_from_runner(cls, runner) -> AstrMessageEvent | None:
+        """从不同 AstrBot runner 结构里取当前消息事件。"""
+        candidate_paths = (
+            ("run_context", "context", "event"),
+            ("context", "event"),
+            ("event",),
+            ("req", "event"),
+        )
+        for path in candidate_paths:
+            obj = runner
+            for attr in path:
+                obj = getattr(obj, attr, None)
+                if obj is None:
+                    break
+            if obj is not None:
+                return obj
+        return None
+
+    @classmethod
+    def _reasoning_event_scope_from_event(cls, event: AstrMessageEvent) -> str:
+        """生成简短事件来源，方便在 INFO 日志中核对规则是否命中。"""
+        try:
+            if event.is_private_chat():
+                candidates = sorted(cls._private_sender_candidates_from_event(event))
+                return f"私聊用户={candidates[0] if candidates else '未知'}"
+        except Exception:
+            pass
+
+        group_id = ""
+        sender_id = ""
+        try:
+            group_id = str(event.get_group_id() or "").strip()
+        except Exception:
+            pass
+        try:
+            sender_id = str(event.get_sender_id() or "").strip()
+        except Exception:
+            pass
+        if group_id or sender_id:
+            return f"群={group_id or '未知'}, 用户={sender_id or '未知'}"
+        return "来源=未知"
+
+    @classmethod
+    def _load_runtime_reasoning_rules(cls, data: dict, config_key: str) -> dict[str, str]:
+        """从配置文件数据读取 `目标=强度` 规则，供 LLM runner 兜底解析。"""
+        rules: dict[str, str] = {}
+        raw_rules = cls._dict_cfg_get(data, config_key, [])
+        if isinstance(raw_rules, (str, int)):
+            raw_rules = [raw_rules]
+        if not isinstance(raw_rules, list):
+            return rules
+        for item in raw_rules:
+            parsed = cls._split_reasoning_rule(item)
+            if not parsed:
+                continue
+            target, effort = parsed
+            if effort:
+                rules[target] = effort
+        return rules
+
+    @classmethod
+    def _load_runtime_reasoning_config(cls) -> dict:
+        """运行时直接读取插件配置，避免依赖权限 handler 已经给事件打标。"""
+        try:
+            cfg_path = (
+                Path(__file__).resolve().parents[2]
+                / "config"
+                / "astrbot_plugin_permission_controller_config.json"
+            )
+            if not cfg_path.exists():
+                return {}
+            data = json.loads(cfg_path.read_text(encoding="utf-8-sig") or "{}")
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.debug(f"读取思考强度运行时配置失败: {exc}")
+            return {}
+
+    @classmethod
+    def _resolve_runtime_reasoning_effort(cls, event: AstrMessageEvent) -> tuple[str, str]:
+        """在 LLM runner 中按当前事件实时解析思考强度。"""
+        data = cls._load_runtime_reasoning_config()
+        if not data:
+            return "", cls._reasoning_event_scope_from_event(event)
+
+        default_effort = cls._normalize_reasoning_effort(
+            cls._dict_cfg_get(data, "reasoning_default_effort", "")
+        )
+        group_defaults = cls._load_runtime_reasoning_rules(
+            data, "reasoning_group_defaults"
+        )
+        group_user_rules = cls._load_runtime_reasoning_rules(
+            data, "reasoning_group_user_rules"
+        )
+        private_users = cls._load_runtime_reasoning_rules(
+            data, "reasoning_private_users"
+        )
+
+        scope = cls._reasoning_event_scope_from_event(event)
+        candidates = cls._private_sender_candidates_from_event(event)
+        try:
+            is_private = bool(event.is_private_chat())
+        except Exception:
+            is_private = False
+
+        if is_private:
+            preferred_candidates = sorted(
+                candidates,
+                key=lambda item: (not str(item).isdigit(), len(str(item)), str(item)),
+            )
+            for candidate in preferred_candidates:
+                effort = private_users.get(candidate)
+                if effort:
+                    return effort, scope
+            return default_effort, scope
+
+        group_id = ""
+        sender_id = ""
+        try:
+            group_id = str(event.get_group_id() or "").strip()
+        except Exception:
+            pass
+        try:
+            sender_id = str(event.get_sender_id() or "").strip()
+        except Exception:
+            pass
+
+        if group_id and sender_id:
+            effort = group_user_rules.get(f"{sender_id}-{group_id}")
+            if effort:
+                return effort, scope
+        if group_id:
+            effort = group_defaults.get(group_id)
+            if effort:
+                return effort, scope
+        return default_effort, scope
+
+    def _apply_reasoning_effort_for_event(self, event: AstrMessageEvent) -> None:
+        """给本次事件打上 LLM 请求 extra_body，后续 AgentRunner 补丁会读取。"""
+        level = self._resolve_reasoning_effort(event)
+        extra_body = self._reasoning_extra_body_for_level(level)
+        if not extra_body:
+            return
+        event.set_extra(REASONING_EVENT_EXTRA_KEY, extra_body)
+        event.set_extra(REASONING_EVENT_LEVEL_KEY, level)
+        logger.info(
+            "[PermissionController] 思考强度: %s (%s)",
+            REASONING_LEVEL_LABELS.get(level, level or "默认"),
+            self._reasoning_event_scope(event),
+        )
+
+    @classmethod
+    def _install_reasoning_payload_patch(cls):
+        """让权限控制器能按事件为 provider.text_chat 注入 extra_body 字段。"""
+        try:
+            from astrbot.core.agent.runners.tool_loop_agent_runner import (
+                ToolLoopAgentRunner,
+            )
+            from astrbot.core.provider.sources.openai_source import (
+                ProviderOpenAIOfficial,
+            )
+        except Exception as exc:
+            logger.debug(f"安装思考强度 payload 补丁失败: {exc}")
+            return
+
+        if getattr(
+            ToolLoopAgentRunner,
+            "_permission_controller_reasoning_patch_version",
+            "",
+        ) == REASONING_PAYLOAD_PATCH_VERSION and getattr(
+            ProviderOpenAIOfficial,
+            "_permission_controller_reasoning_patch_version",
+            "",
+        ) == REASONING_PAYLOAD_PATCH_VERSION:
+            cls._reasoning_payload_patch_installed = True
+            logger.debug(
+                "[PermissionController] 思考强度 custom_extra_body 补丁已存在: %s",
+                REASONING_PAYLOAD_PATCH_VERSION,
+            )
+            return
+
+        original_reset = getattr(
+            ToolLoopAgentRunner,
+            "_permission_controller_original_reset",
+            ToolLoopAgentRunner.reset,
+        )
+        original_iter = getattr(
+            ToolLoopAgentRunner,
+            "_permission_controller_original_iter_llm_responses",
+            ToolLoopAgentRunner._iter_llm_responses,
+        )
+        original_query = getattr(
+            ProviderOpenAIOfficial,
+            "_permission_controller_original_query",
+            ProviderOpenAIOfficial._query,
+        )
+        original_query_stream = getattr(
+            ProviderOpenAIOfficial,
+            "_permission_controller_original_query_stream",
+            ProviderOpenAIOfficial._query_stream,
+        )
+        ToolLoopAgentRunner._permission_controller_original_reset = original_reset
+        ToolLoopAgentRunner._permission_controller_original_iter_llm_responses = original_iter
+        ProviderOpenAIOfficial._permission_controller_original_query = original_query
+        ProviderOpenAIOfficial._permission_controller_original_query_stream = (
+            original_query_stream
+        )
+
+        async def patched_reset(runner_self, *args, **kwargs):
+            result = await original_reset(runner_self, *args, **kwargs)
+            try:
+                event = cls._event_from_runner(runner_self)
+                if event is None:
+                    logger.debug(
+                        "[PermissionController] reasoning patch 已进入 runner.reset，"
+                        "但未能取得当前事件；runner=%s",
+                        type(runner_self).__name__,
+                    )
+                    return result
+                level, scope = cls._resolve_runtime_reasoning_effort(event)
+                extra_body = cls._reasoning_extra_body_for_level(level)
+                if not extra_body:
+                    logger.debug(
+                        "[PermissionController] reasoning patch 已进入 runner.reset，"
+                        "但当前会话未配置思考强度: %s",
+                        scope,
+                    )
+                    return result
+                try:
+                    event.set_extra(REASONING_EVENT_EXTRA_KEY, extra_body)
+                    event.set_extra(REASONING_EVENT_LEVEL_KEY, level)
+                except Exception:
+                    pass
+                setattr(runner_self, REASONING_EVENT_EXTRA_KEY, extra_body)
+                setattr(runner_self, REASONING_EVENT_LEVEL_KEY, level)
+                logger.debug(
+                    "[PermissionController] runner.reset 已命中思考强度: %s (%s), custom_extra_body=%s",
+                    level,
+                    scope,
+                    extra_body,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "[PermissionController] runner.reset 思考强度诊断失败: %s",
+                    exc,
+                )
+            return result
+
+        async def patched_openai_query(provider_self, payloads, tools, *args, **kwargs):
+            provider_config = getattr(provider_self, "provider_config", {})
+            meta = (
+                provider_config.get(REASONING_PROVIDER_META_KEY, {})
+                if isinstance(provider_config, dict)
+                else {}
+            )
+            if isinstance(meta, dict) and meta.get("extra_body"):
+                logger.debug(
+                    "[PermissionController] OpenAI-compatible custom_extra_body 已实际注入思考强度: %s (%s), custom_extra_body=%s",
+                    meta.get("level") or "未知",
+                    meta.get("scope") or "来源=未知",
+                    meta.get("extra_body"),
+                )
+            return await original_query(provider_self, payloads, tools, *args, **kwargs)
+
+        async def patched_openai_query_stream(
+            provider_self,
+            payloads,
+            tools,
+            *args,
+            **kwargs,
+        ):
+            provider_config = getattr(provider_self, "provider_config", {})
+            meta = (
+                provider_config.get(REASONING_PROVIDER_META_KEY, {})
+                if isinstance(provider_config, dict)
+                else {}
+            )
+            if isinstance(meta, dict) and meta.get("extra_body"):
+                logger.debug(
+                    "[PermissionController] OpenAI-compatible stream custom_extra_body 已实际注入思考强度: %s (%s), custom_extra_body=%s",
+                    meta.get("level") or "未知",
+                    meta.get("scope") or "来源=未知",
+                    meta.get("extra_body"),
+                )
+            async for resp in original_query_stream(
+                provider_self,
+                payloads,
+                tools,
+                *args,
+                **kwargs,
+            ):
+                yield resp
+
+        async def patched_iter_llm_responses(runner_self, *args, **kwargs):
+            provider = getattr(runner_self, "provider", None)
+            provider_config = getattr(provider, "provider_config", None)
+            original_custom_extra_body = None
+            had_custom_extra_body = False
+            had_meta = False
+            original_meta = None
+            try:
+                event = cls._event_from_runner(runner_self)
+                if event is None:
+                    logger.debug(
+                        "[PermissionController] 已进入 LLM runner，但未能取得当前事件；runner=%s",
+                        type(runner_self).__name__,
+                    )
+                    event_extra_body = None
+                    event_level = ""
+                    scope = "来源=未知"
+                else:
+                    event_extra_body = event.get_extra(REASONING_EVENT_EXTRA_KEY, None)
+                    event_level = event.get_extra(REASONING_EVENT_LEVEL_KEY, "")
+                    scope = cls._reasoning_event_scope_from_event(event)
+                extra_body = event_extra_body
+                level = event_level
+                if not isinstance(extra_body, dict) or not extra_body:
+                    extra_body = getattr(runner_self, REASONING_EVENT_EXTRA_KEY, None)
+                    level = getattr(runner_self, REASONING_EVENT_LEVEL_KEY, level)
+                if not isinstance(extra_body, dict) or not extra_body:
+                    if event is not None:
+                        level, scope = cls._resolve_runtime_reasoning_effort(event)
+                        extra_body = cls._reasoning_extra_body_for_level(level)
+                        if isinstance(extra_body, dict) and extra_body:
+                            try:
+                                event.set_extra(REASONING_EVENT_EXTRA_KEY, extra_body)
+                                event.set_extra(REASONING_EVENT_LEVEL_KEY, level)
+                            except Exception:
+                                pass
+                    else:
+                        extra_body = {}
+                if (
+                    isinstance(provider_config, dict)
+                    and isinstance(extra_body, dict)
+                    and extra_body
+                ):
+                    had_custom_extra_body = "custom_extra_body" in provider_config
+                    original_custom_extra_body = provider_config.get(
+                        "custom_extra_body"
+                    )
+                    merged_extra_body = {}
+                    if isinstance(original_custom_extra_body, dict):
+                        merged_extra_body.update(original_custom_extra_body)
+                    merged_extra_body.update(extra_body)
+                    provider_config["custom_extra_body"] = merged_extra_body
+
+                    had_meta = REASONING_PROVIDER_META_KEY in provider_config
+                    original_meta = provider_config.get(REASONING_PROVIDER_META_KEY)
+                    provider_config[REASONING_PROVIDER_META_KEY] = {
+                        "level": str(level or ""),
+                        "scope": str(scope or ""),
+                        "extra_body": extra_body,
+                    }
+                elif event is not None:
+                    logger.debug(
+                        "[PermissionController] 已进入 LLM runner，但未为当前会话注入思考强度: %s",
+                        scope,
+                    )
+            except Exception as exc:
+                logger.debug(f"[PermissionController] 注入思考强度 payload 失败: {exc}")
+
+            try:
+                async for resp in original_iter(runner_self, *args, **kwargs):
+                    yield resp
+            finally:
+                if isinstance(provider_config, dict):
+                    if had_custom_extra_body:
+                        provider_config["custom_extra_body"] = (
+                            original_custom_extra_body
+                        )
+                    else:
+                        provider_config.pop("custom_extra_body", None)
+                    if had_meta:
+                        provider_config[REASONING_PROVIDER_META_KEY] = original_meta
+                    else:
+                        provider_config.pop(REASONING_PROVIDER_META_KEY, None)
+
+        ToolLoopAgentRunner.reset = patched_reset
+        ToolLoopAgentRunner._iter_llm_responses = patched_iter_llm_responses
+        ProviderOpenAIOfficial._query = patched_openai_query
+        ProviderOpenAIOfficial._query_stream = patched_openai_query_stream
+        ToolLoopAgentRunner._permission_controller_reasoning_patch_installed = True
+        ToolLoopAgentRunner._permission_controller_reasoning_patch_version = (
+            REASONING_PAYLOAD_PATCH_VERSION
+        )
+        ProviderOpenAIOfficial._permission_controller_reasoning_patch_installed = True
+        ProviderOpenAIOfficial._permission_controller_reasoning_patch_version = (
+            REASONING_PAYLOAD_PATCH_VERSION
+        )
+        cls._reasoning_payload_patch_installed = True
+        logger.debug(
+            "[PermissionController] 思考强度 custom_extra_body 补丁已安装: %s",
+            REASONING_PAYLOAD_PATCH_VERSION,
+        )
+
     def _load_admin_ids(self):
         """从 AstrBot 全局配置读取管理员 ID，用于绕过权限限制。"""
         admin_ids = set()
@@ -658,11 +1210,13 @@ class GroupUserWhitelistPlugin(Star):
         # 黑名单优先级最高；但允许平台管理员按 admin_bypass 配置绕过。
         if self.enable_group_blacklist and sender_id in self.group_blacklist:
             if self.admin_bypass and self._is_admin(sender_id):
+                self._apply_reasoning_effort_for_event(event)
                 return
             event.stop_event()
             return
 
         if not self.enable_group_rules:
+            self._apply_reasoning_effort_for_event(event)
             return
 
         # 严格群聊权限：群聊规则开启后，只有两种情况放行：
@@ -670,6 +1224,7 @@ class GroupUserWhitelistPlugin(Star):
         # 2. 命中“放行权限 QQ 列表”的 用户QQ-群号 组合。
         # 未配置的群、未配置的用户一律拦截，避免“未填写群号仍可调用”。
         if self.admin_bypass and self._is_admin(sender_id):
+            self._apply_reasoning_effort_for_event(event)
             return
 
         denied_users = self.deny_rules.get(group_id, set())
@@ -678,10 +1233,12 @@ class GroupUserWhitelistPlugin(Star):
             return
 
         if group_id in self.allowed_groups:
+            self._apply_reasoning_effort_for_event(event)
             return
 
         allowed_users = self.rules.get(group_id, set())
         if sender_id and sender_id in allowed_users:
+            self._apply_reasoning_effort_for_event(event)
             return
 
         event.stop_event()
@@ -710,10 +1267,18 @@ class GroupUserWhitelistPlugin(Star):
             return
 
         if self.admin_bypass and any(self._is_admin(item) for item in candidates):
+            self._apply_reasoning_effort_for_event(event)
             return
 
         # 私聊白名单为空时，表示不放行任何普通私聊用户。
         if self.private_chat_users and candidates & self.private_chat_users:
+            self._apply_reasoning_effort_for_event(event)
             return
 
         event.stop_event()
+
+
+try:
+    GroupUserWhitelistPlugin._install_reasoning_payload_patch()
+except Exception as exc:  # pragma: no cover - 兜底日志，不影响插件注册
+    logger.info("[PermissionController] 模块导入阶段安装思考强度补丁失败: %s", exc)

@@ -66,5 +66,43 @@
         "default": []
       }
     }
+  },
+  "reasoning_settings": {
+    "description": "模型思考强度",
+    "hint": "按群聊、群成员或私聊好友为 OpenAI 兼容模型注入 reasoning_effort。默认表示不注入，保持模型服务商原始配置。",
+    "type": "object",
+    "items": {
+      "reasoning_default_effort": {
+        "description": "全局默认思考强度",
+        "hint": "未命中群聊、群成员或私聊规则时使用。默认表示不注入任何思考强度参数。",
+        "type": "string",
+        "default": "",
+        "options": [
+          "",
+          "low",
+          "medium",
+          "high",
+          "ultra"
+        ]
+      },
+      "reasoning_group_defaults": {
+        "description": "群聊默认思考强度",
+        "hint": "格式：群号=强度。强度可填 低/中/高/超高 或 low/medium/high/ultra。",
+        "type": "list",
+        "default": []
+      },
+      "reasoning_group_user_rules": {
+        "description": "群成员思考强度覆盖",
+        "hint": "格式：用户QQ-群号=强度。优先级高于群聊默认思考强度。",
+        "type": "list",
+        "default": []
+      },
+      "reasoning_private_users": {
+        "description": "私聊思考强度",
+        "hint": "格式：用户QQ=强度。用于指定好友私聊机器人时的思考强度。",
+        "type": "list",
+        "default": []
+      }
+    }
   }
 }

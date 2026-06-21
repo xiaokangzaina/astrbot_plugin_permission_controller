@@ -46,6 +46,77 @@ def _normalize_list(value: Any) -> list[str]:
     return [str(item).strip() for item in parts if str(item).strip()]
 
 
+REASONING_LEVEL_LABELS = {
+    "": "默认",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "ultra": "超高",
+}
+
+REASONING_LEVEL_ALIASES = {
+    "": "",
+    "default": "",
+    "默认": "",
+    "不设置": "",
+    "关闭": "",
+    "低": "low",
+    "low": "low",
+    "l": "low",
+    "中": "medium",
+    "medium": "medium",
+    "mid": "medium",
+    "m": "medium",
+    "高": "high",
+    "high": "high",
+    "h": "high",
+    "超高": "ultra",
+    "最高": "ultra",
+    "ultra": "ultra",
+    "max": "ultra",
+    "maximum": "ultra",
+}
+
+
+def _normalize_reasoning_effort(value: Any) -> str:
+    text = str(value or "").strip()
+    return REASONING_LEVEL_ALIASES.get(
+        text.lower(),
+        REASONING_LEVEL_ALIASES.get(text, ""),
+    )
+
+
+def _reasoning_label(value: Any) -> str:
+    return REASONING_LEVEL_LABELS.get(_normalize_reasoning_effort(value), "默认")
+
+
+def _split_reasoning_rule(rule: Any) -> tuple[str, str] | None:
+    text = str(rule or "").strip()
+    if not text:
+        return None
+    for sep in ("=", "：", ":"):
+        if sep in text:
+            target, effort = text.split(sep, 1)
+            target = target.strip()
+            effort = _normalize_reasoning_effort(effort)
+            if target:
+                return target, effort
+            return None
+    return None
+
+
+def _reasoning_map(value: Any) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for item in _normalize_list(value):
+        parsed = _split_reasoning_rule(item)
+        if not parsed:
+            continue
+        target, effort = parsed
+        if effort:
+            result[target] = effort
+    return result
+
+
 def _get_astrbot_version() -> str:
     try:
         from astrbot.core.config.default import VERSION
@@ -108,7 +179,10 @@ class PermissionPageService:
                     contacts[user_id] = self._normalize_friend_item(item)
             except Exception as exc:
                 logger.debug("[PermissionController] 获取好友列表失败: %s", exc)
-        for user_id in _normalize_list(self._read_current_config().get("private_chat_users")):
+        config = self._read_current_config()
+        for user_id in _normalize_list(config.get("private_chat_users")):
+            contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
+        for user_id in _reasoning_map(config.get("reasoning_private_users")):
             contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
         return sorted(
             contacts.values(),
@@ -135,12 +209,22 @@ class PermissionPageService:
             user_id, target_group_id = rule.split("-", 1)
             if target_group_id.strip() == group_id and user_id.strip():
                 denied_users.append(user_id.strip())
+        group_reasoning = _reasoning_map(config.get("reasoning_group_defaults"))
+        member_reasoning = []
+        for target, effort in _reasoning_map(config.get("reasoning_group_user_rules")).items():
+            if "-" not in target:
+                continue
+            user_id, target_group_id = target.split("-", 1)
+            if target_group_id.strip() == group_id and user_id.strip():
+                member_reasoning.append(f"{user_id.strip()}={effort}")
         return {
             "group_info": self._build_group_info(group_id),
             "config": {
                 "group_enabled": group_id in set(_normalize_list(config.get("allowed_groups"))),
                 "allowed_users": sorted(set(users)),
                 "denied_users": sorted(set(denied_users)),
+                "reasoning_effort": group_reasoning.get(group_id, ""),
+                "reasoning_user_rules": sorted(set(member_reasoning)),
             },
         }
 
@@ -154,8 +238,10 @@ class PermissionPageService:
 
         config = self._read_current_config()
         allowed_groups = set(_normalize_list(config.get("allowed_groups")))
+        group_reasoning = _reasoning_map(config.get("reasoning_group_defaults"))
         simple_rules = []
         deny_rules = []
+        reasoning_user_rules = []
         for rule in _normalize_list(config.get("simple_rules")):
             if "-" not in rule:
                 simple_rules.append(rule)
@@ -170,6 +256,14 @@ class PermissionPageService:
             user_id, target_group_id = rule.split("-", 1)
             if target_group_id.strip() != group_id:
                 deny_rules.append(f"{user_id.strip()}-{target_group_id.strip()}")
+        for target, effort in _reasoning_map(config.get("reasoning_group_user_rules")).items():
+            if "-" not in target:
+                continue
+            user_id, target_group_id = target.split("-", 1)
+            if target_group_id.strip() != group_id:
+                reasoning_user_rules.append(
+                    f"{user_id.strip()}-{target_group_id.strip()}={effort}"
+                )
 
         if _parse_bool(payload.get("group_enabled")):
             allowed_groups.add(group_id)
@@ -182,18 +276,45 @@ class PermissionPageService:
         for user_id in _normalize_list(payload.get("denied_users")):
             if user_id.isdigit():
                 deny_rules.append(f"{user_id}-{group_id}")
+        group_effort = _normalize_reasoning_effort(payload.get("reasoning_effort"))
+        if group_effort:
+            group_reasoning[group_id] = group_effort
+        else:
+            group_reasoning.pop(group_id, None)
+
+        for item in _normalize_list(payload.get("reasoning_user_rules")):
+            parsed = _split_reasoning_rule(item)
+            if not parsed:
+                continue
+            user_id, effort = parsed
+            if user_id.isdigit() and effort:
+                reasoning_user_rules.append(f"{user_id}-{group_id}={effort}")
 
         self._write_config({
             "allowed_groups": sorted(allowed_groups),
             "simple_rules": sorted(set(simple_rules)),
             "group_deny_rules": sorted(set(deny_rules)),
+            "reasoning_group_defaults": [
+                f"{target}={effort}"
+                for target, effort in sorted(group_reasoning.items())
+            ],
+            "reasoning_group_user_rules": sorted(set(reasoning_user_rules)),
         })
         self._touch_group_config(group_id)
         return self.get_group_config(group_id)
 
     def reset_group_config(self, group_id: str) -> dict[str, Any]:
         """清空单群放行和该群用户规则。"""
-        return self.update_group_config(group_id, {"group_enabled": False, "allowed_users": [], "denied_users": []})
+        return self.update_group_config(
+            group_id,
+            {
+                "group_enabled": False,
+                "allowed_users": [],
+                "denied_users": [],
+                "reasoning_effort": "",
+                "reasoning_user_rules": [],
+            },
+        )
 
     def get_private_contact_config(self, user_id: str) -> dict[str, Any]:
         """返回单个私聊好友的权限配置。"""
@@ -202,9 +323,13 @@ class PermissionPageService:
             raise ValueError("user_id must not be empty")
         config = self._read_current_config()
         enabled_users = set(_normalize_list(config.get("private_chat_users")))
+        private_reasoning = _reasoning_map(config.get("reasoning_private_users"))
         return {
             "contact_info": self._build_friend_info(user_id),
-            "config": {"private_enabled": user_id in enabled_users},
+            "config": {
+                "private_enabled": user_id in enabled_users,
+                "reasoning_effort": private_reasoning.get(user_id, ""),
+            },
         }
 
     def update_private_contact_config(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -216,16 +341,33 @@ class PermissionPageService:
             raise ValueError("payload must be an object")
         config = self._read_current_config()
         enabled_users = set(_normalize_list(config.get("private_chat_users")))
+        private_reasoning = _reasoning_map(config.get("reasoning_private_users"))
         if _parse_bool(payload.get("private_enabled")):
             enabled_users.add(user_id)
         else:
             enabled_users.discard(user_id)
-        self._write_config({"private_chat_users": sorted(enabled_users)})
+        effort = _normalize_reasoning_effort(payload.get("reasoning_effort"))
+        if effort:
+            private_reasoning[user_id] = effort
+        else:
+            private_reasoning.pop(user_id, None)
+        self._write_config(
+            {
+                "private_chat_users": sorted(enabled_users),
+                "reasoning_private_users": [
+                    f"{target}={effort}"
+                    for target, effort in sorted(private_reasoning.items())
+                ],
+            }
+        )
         return self.get_private_contact_config(user_id)
 
     def reset_private_contact_config(self, user_id: str) -> dict[str, Any]:
         """关闭单个好友私聊权限。"""
-        return self.update_private_contact_config(user_id, {"private_enabled": False})
+        return self.update_private_contact_config(
+            user_id,
+            {"private_enabled": False, "reasoning_effort": ""},
+        )
 
     def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """根据前端提交的扁平 key->value，按 schema 清洗并写回配置文件。"""
@@ -301,13 +443,17 @@ class PermissionPageService:
 
     def _build_friend_info(self, user_id: str, source: str = "fallback") -> dict[str, Any]:
         user_id = str(user_id).strip()
+        config = self._read_current_config()
+        private_reasoning = _reasoning_map(config.get("reasoning_private_users")).get(user_id, "")
         return {
             "user_id": user_id,
             "nickname": f"好友 {user_id}",
             "remark": "",
             "avatar": f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640",
             "source": source,
-            "private_enabled": user_id in set(_normalize_list(self._read_current_config().get("private_chat_users"))),
+            "private_enabled": user_id in set(_normalize_list(config.get("private_chat_users"))),
+            "reasoning_effort": private_reasoning,
+            "reasoning_label": _reasoning_label(private_reasoning),
         }
 
     def _normalize_friend_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -336,12 +482,21 @@ class PermissionPageService:
                 group_id = group_id.strip()
                 if group_id:
                     group_ids.add(group_id)
+        group_ids.update(_reasoning_map(config.get("reasoning_group_defaults")).keys())
+        for target in _reasoning_map(config.get("reasoning_group_user_rules")):
+            if "-" not in target:
+                continue
+            _, group_id = target.split("-", 1)
+            group_id = group_id.strip()
+            if group_id:
+                group_ids.add(group_id)
         return [self._build_group_info(group_id, source="configured") for group_id in sorted(group_ids)]
 
     def _build_group_info(self, group_id: str, source: str = "fallback") -> dict[str, Any]:
         group_id = str(group_id).strip()
         config = self._read_current_config()
         touched_at = self._group_config_touch_times().get(group_id, 0)
+        group_reasoning = _reasoning_map(config.get("reasoning_group_defaults")).get(group_id, "")
         return {
             "group_id": group_id,
             "group_name": f"群 {group_id}",
@@ -351,6 +506,8 @@ class PermissionPageService:
             "source": source,
             "config_updated_at": touched_at,
             "group_enabled": group_id in set(_normalize_list(config.get("allowed_groups"))),
+            "reasoning_effort": group_reasoning,
+            "reasoning_label": _reasoning_label(group_reasoning),
         }
 
     def _normalize_group_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -430,6 +587,10 @@ class PermissionPageService:
             elif field.get("type") == "bool":
                 parsed = _parse_bool(value)
                 value = field.get("default", False) if parsed is None else parsed
+            elif field.get("type") == "select":
+                value = _normalize_reasoning_effort(value)
+            elif key == "reasoning_default_effort":
+                value = _normalize_reasoning_effort(value)
             result[key] = value
         return result
 
@@ -447,6 +608,11 @@ class PermissionPageService:
                 value = config.get(key, None)
                 if value is not None:
                     return value
+                group = self._group_for_key(key)
+                if group:
+                    sub = config.get(group, None)
+                    if isinstance(sub, dict) and key in sub:
+                        return sub.get(key, default)
         except Exception:
             pass
         return default
@@ -482,6 +648,8 @@ class PermissionPageService:
         try:
             if group is not None and hasattr(config, "get"):
                 sub = config.get(group, None)
+                if sub is None:
+                    sub = {}
                 if isinstance(sub, dict):
                     sub[key] = value
                     config[group] = sub
@@ -531,6 +699,8 @@ class PermissionPageService:
             return parsed
         if field_type == "list":
             return _normalize_list(value)
+        if field_type == "select":
+            return _normalize_reasoning_effort(value)
         if field_type == "int":
             try:
                 return int(value)
