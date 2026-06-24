@@ -81,13 +81,12 @@
           "",
           "low",
           "medium",
-          "high",
-          "ultra"
+          "high"
         ]
       },
       "reasoning_group_defaults": {
         "description": "群聊默认思考强度",
-        "hint": "格式：群号=强度。强度可填 低/中/高/超高 或 low/medium/high/ultra。",
+        "hint": "格式：群号=强度。强度可填 低/中/高 或 low/medium/high。",
         "type": "list",
         "default": []
       },

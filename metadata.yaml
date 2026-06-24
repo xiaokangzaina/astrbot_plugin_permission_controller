@@ -1,8 +1,8 @@
 name: astrbot_plugin_permission_controller
 display_name: 权限控制器
-desc: 按用户 QQ、群号、私聊白名单和群聊黑名单控制 AstrBot 机器人调用权限，支持分群/分用户配置模型思考强度。
-help: simple_rules 填写 用户QQ-群号；allowed_groups 填写整体放行的群号并自动同步到平台白名单；private_chat_users 用于私聊白名单；reasoning_group_defaults 填写 群号=强度，reasoning_group_user_rules 填写 用户QQ-群号=强度，reasoning_private_users 填写 用户QQ=强度。
-version: v2.1.0
+desc: 五合一融合控制台，统一管理权限控制、通用生图、安全审核、QQ群管和网页截图，支持按群聊或私聊对象单独启用功能。
+help: 安装后打开插件配置页，左侧选择插件模块，中间选择群聊或私聊对象，右侧直接编辑配置项；通用生图、安全审核、QQ群管、网页截图可按当前对象启用或关闭。
+version: v3.0.0
 author: xiaokangzaina
 repo: "https://github.com/xiaokangzaina/astrbot_plugin_permission_controller"
 astrbot_version: ">=4.0.0,<5"

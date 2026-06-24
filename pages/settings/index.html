@@ -1,71 +1,267 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>权限控制器配置</title>
-    <link rel="stylesheet" href="./styles.css?v=reasoning_ui_20260620_001" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AstrBot 融合控制台</title>
+  <link rel="stylesheet" href="./styles.css?v=product_design_20260624_fusion_console_12_persisted_tone" />
 </head>
 <body>
-    <div class="page-shell">
-        <section class="workspace-shell">
-            <header class="page-head module-card hero-card">
-                <div class="page-head-text">
-                    <div class="eyebrow">Permission Center</div>
-                    <h2 class="page-title">权限控制器</h2>
-                    <p class="page-subtitle">以群为模块管理放行、拒绝与白名单规则，统一控制 AstrBot 调用权限。</p>
-                    <div class="hero-pills" aria-hidden="true">
-                        <span>群权限</span>
-                        <span>用户规则</span>
-                        <span>黑白名单</span>
-                    </div>
-                    <div class="hero-status-row" aria-label="状态概览">
-                        <section class="side-meta top-contact-meta">
-                            <div><span>群聊</span><strong id="groupCountLabel">0</strong></div>
-                            <div><span>私聊</span><strong id="privateCountLabel">0</strong></div>
-                        </section>
-                        <section class="hero-info-grid" aria-label="状态信息">
-                            <div class="hero-info-card"><span>当前时间</span><strong id="currentTimeLabel">--:--:--</strong><em id="currentDateLabel">加载中</em></div>
-                            <div class="hero-info-card"><span>系统版本</span><strong id="systemVersionLabel">读取中</strong><em id="pythonVersionLabel">Python --</em></div>
-                            <div class="hero-info-card"><span>所在地天气</span><strong id="weatherLabel">定位中</strong><em id="weatherMetaLabel">需要浏览器定位</em></div>
-                        </section>
-                    </div>
-                </div>
-                <div class="page-head-actions">
-                    <button class="ghost-button" id="toggleThemeBtn">主题：自动</button>
-                    <button class="ghost-button" id="refreshGroupsBtn">同步群列表</button>
-                    <button class="ghost-button" id="resetGroupBtn">清空该群配置</button>
-                    <button class="primary-button" id="saveGroupBtn">保存群聊配置</button>
-                </div>
-            </header>
+  <div class="media-backdrop" id="mediaBackdrop" aria-hidden="true"></div>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="app-shell">
+    <aside class="navigation-panel">
+      <nav class="nav-rail" aria-label="融合控制台导航">
+        <span class="rail-logo" aria-hidden="true"></span>
+        <button class="rail-item active" type="button" data-rail-plugin="permission" title="权限控制器" aria-label="权限控制器">
+          <span class="rail-icon">◇</span><span>权限控制</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="raw-image" title="通用生图" aria-label="通用生图">
+          <span class="rail-icon">□</span><span>通用生图</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="aip-review" title="安全审核" aria-label="安全审核">
+          <span class="rail-icon">◆</span><span>安全审核</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="qqadmin" title="QQ群管" aria-label="QQ群管">
+          <span class="rail-icon">○</span><span>QQ群管</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="webshot" title="网页截图" aria-label="网页截图">
+          <span class="rail-icon">⊙</span><span>网页截图</span>
+        </button>
+        <span class="rail-divider" aria-hidden="true"></span>
+        <div class="rail-status">
+          <span></span>
+          <strong>系统状态</strong>
+          <em>运行正常</em>
+        </div>
+        <button class="rail-item rail-soft" id="railThemeBtn" type="button" title="切换主题" aria-label="切换主题">
+          <span class="rail-icon">◐</span><span>主题切换</span>
+        </button>
+        <div class="rail-admin">
+          <span class="admin-avatar"></span>
+          <strong>对象列表</strong>
+          <em>群聊 / 私聊</em>
+        </div>
+      </nav>
 
-            <main class="group-workspace">
-                <aside class="group-sidebar module-card">
-                    <div class="module-title-row">
-                        <div>
-                            <span class="module-kicker">Groups</span>
-                            <h3>群聊模块</h3>
-                        </div>
-                    </div>
-                    <input id="groupSearchInput" class="group-search" type="text" placeholder="搜索群名或群号" />
-                    <div id="groupList" class="group-list empty-state">群列表加载中…</div>
-                </aside>
+      <div class="navigation-content">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true"><span></span></div>
+          <div>
+            <p class="eyebrow">对象列表</p>
+            <h1>群聊 / 私聊列表</h1>
+          </div>
+        </div>
 
-                <section class="group-config-panel module-card">
-                    <div class="group-config-head">
-                        <div>
-                            <span class="module-kicker">Policy</span>
-                            <h3 id="currentGroupTitle">请选择群聊</h3>
-                            <p id="currentGroupMeta">点击左侧群聊头像即可配置</p>
-                        </div>
-                    </div>
-                    <div id="groupForm" class="form-stack empty-state">请从左侧选择一个群聊。</div>
-                </section>
-            </main>
+        <div class="nav-actions">
+          <button class="icon-button" id="toggleThemeBtn" type="button" title="切换主题" aria-label="切换主题">
+            <span class="icon icon-theme" aria-hidden="true"></span>
+            <span id="themeText">自动</span>
+          </button>
+          <button class="icon-button" id="refreshGroupsBtn" type="button" title="同步列表" aria-label="同步列表">
+            <span class="icon icon-refresh" aria-hidden="true"></span>
+            <span>同步</span>
+          </button>
+        </div>
+
+        <section class="fusion-nav-section" aria-label="插件分区">
+          <div class="list-head">
+            <span>插件分区</span>
+            <b id="pluginCount">5</b>
+          </div>
+          <div id="pluginNav" class="plugin-nav"></div>
         </section>
-    </div>
 
-    <div class="toast-layer" id="toastLayer"></div>
-    <script type="module" src="./app.js?v=reasoning_ui_20260620_001"></script>
+        <section id="permissionObjectPanel" class="permission-object-panel">
+          <label class="search-box" aria-label="搜索">
+            <span class="icon icon-search" aria-hidden="true"></span>
+            <input id="groupSearchInput" type="text" autocomplete="off" placeholder="搜索群聊 / 私聊 / QQ" />
+          </label>
+
+          <div class="segment-control" role="tablist" aria-label="对象类型">
+            <button id="groupTabBtn" class="active" type="button" role="tab" aria-selected="true">群聊</button>
+            <button id="privateTabBtn" type="button" role="tab" aria-selected="false">私聊</button>
+          </div>
+
+          <div class="list-head">
+            <span id="listTitle">群聊对象</span>
+            <b id="listCount">0</b>
+          </div>
+          <div id="groupList" class="object-list empty-state">正在同步对象列表</div>
+        </section>
+      </div>
+    </aside>
+
+    <main class="work-panel">
+      <header class="work-header">
+        <div>
+          <p class="eyebrow" id="currentScopeLabel">融合控制台</p>
+          <h2 id="currentGroupTitle">选择配置对象</h2>
+          <p id="currentGroupMeta">从左侧选择群聊或私聊对象</p>
+        </div>
+        <div class="work-actions">
+          <button class="ghost-button" id="resetGroupBtn" type="button">清空配置</button>
+          <button class="primary-button" id="saveGroupBtn" type="button">保存配置</button>
+        </div>
+      </header>
+
+      <section class="metric-grid" id="metricGrid" aria-label="配置概览"></section>
+      <section id="groupForm" class="form-stage empty-state">请选择一个对象开始配置</section>
+    </main>
+
+    <aside class="insight-panel">
+      <section class="insight-block overview-card">
+        <div class="studio-title-row">
+          <p class="eyebrow">总览</p>
+          <span>实时</span>
+        </div>
+        <div class="overview-stat-grid">
+          <article><span>已融合</span><strong id="fusionLoadedCount">1/5</strong><em>模块</em></article>
+          <article><span>对象</span><strong id="fusionObjectCount">0</strong><em>群聊 / 私聊</em></article>
+          <article><span>功能</span><strong id="fusionMenuCount">0</strong><em>配置区块</em></article>
+          <article><span>状态</span><strong id="fusionHealthText">同步中</strong><em id="fusionHealthMeta">等待后端</em></article>
+        </div>
+        <div class="glass-chart">
+          <div class="donut-ring" aria-hidden="true"></div>
+          <div class="chart-legend">
+            <span><i class="legend-ok"></i>已初始化 <b id="fusionInitializedCount">0</b></span>
+            <span><i class="legend-wait"></i>待初始化 <b id="fusionPendingCount">0</b></span>
+            <span><i class="legend-error"></i>异常 <b id="fusionErrorCount">0</b></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="insight-block trend-card">
+        <div class="studio-title-row">
+          <p class="eyebrow">活动</p>
+          <span>今日</span>
+        </div>
+        <div class="trend-curve" aria-hidden="true">
+          <span style="--h:36%"></span>
+          <span style="--h:62%"></span>
+          <span style="--h:48%"></span>
+          <span style="--h:76%"></span>
+          <span style="--h:54%"></span>
+          <span style="--h:88%"></span>
+          <span style="--h:68%"></span>
+        </div>
+        <div class="trend-bars">
+          <div><span>权限</span><b style="--w:82%"></b></div>
+          <div><span>审核</span><b style="--w:64%"></b></div>
+          <div><span>群管</span><b style="--w:72%"></b></div>
+        </div>
+      </section>
+
+      <section class="insight-block fusion-stack">
+        <div class="studio-title-row">
+          <p class="eyebrow">插件栈</p>
+          <span id="activePluginLabel">权限</span>
+        </div>
+        <div id="pluginStack" class="plugin-stack"></div>
+      </section>
+
+      <section class="insight-block background-studio">
+        <div class="studio-title-row">
+          <p class="eyebrow">背景设置</p>
+          <span id="backgroundStatusLabel">系统混色</span>
+        </div>
+        <input class="visually-hidden" id="backgroundInput" type="file" accept="image/gif,image/png,image/jpeg,image/webp" />
+        <label class="background-preview" id="backgroundDropzone" for="backgroundInput">
+          <span class="background-preview-glint" aria-hidden="true"></span>
+          <span class="background-preview-label">GIF / 图片</span>
+          <strong id="backgroundFileName">混色背景</strong>
+        </label>
+        <div class="background-actions">
+          <button class="ghost-button" id="uploadBackgroundBtn" type="button">上传背景</button>
+          <button class="ghost-button" id="resetBackgroundBtn" type="button">重置</button>
+        </div>
+        <div class="tone-control-grid" aria-label="自定义色调">
+          <label class="tone-field">
+            <span>主色</span>
+            <input id="tonePrimaryInput" type="color" value="#25d8ff" />
+          </label>
+          <label class="tone-field">
+            <span>辅色</span>
+            <input id="toneSecondaryInput" type="color" value="#8b74ff" />
+          </label>
+          <label class="tone-field">
+            <span>光感</span>
+            <input id="toneGlowInput" type="color" value="#ff6fa9" />
+          </label>
+          <label class="tone-field">
+            <span>背景卡</span>
+            <input id="toneBackdropCardInput" type="color" value="#5c78c8" />
+          </label>
+          <button class="ghost-button tone-reset-button" id="resetToneBtn" type="button">还原</button>
+        </div>
+        <div class="background-control-grid">
+          <label class="range-field">
+            <span>焦点 X</span>
+            <input id="backgroundCropX" type="range" min="0" max="100" value="50" />
+          </label>
+          <label class="range-field">
+            <span>焦点 Y</span>
+            <input id="backgroundCropY" type="range" min="0" max="100" value="50" />
+          </label>
+          <label class="range-field">
+            <span>遮罩</span>
+            <input id="backgroundOverlay" type="range" min="18" max="72" value="42" />
+          </label>
+          <label class="range-field">
+            <span>雾化</span>
+            <input id="backgroundBlur" type="range" min="0" max="36" value="0" />
+          </label>
+          <label class="range-field">
+            <span>背景卡透明度</span>
+            <input id="panelOpacityInput" type="range" min="4" max="38" value="22" />
+          </label>
+        </div>
+      </section>
+
+      <section class="insight-block runtime-card">
+        <p class="eyebrow">运行环境</p>
+        <div class="runtime-clock">
+          <strong id="currentTimeLabel">--:--:--</strong>
+          <span id="currentDateLabel">加载中</span>
+        </div>
+        <dl class="runtime-list">
+          <div>
+            <dt>系统</dt>
+            <dd id="systemVersionLabel">读取中</dd>
+          </div>
+          <div>
+            <dt>Python / AstrBot</dt>
+            <dd id="pythonVersionLabel">Python --</dd>
+          </div>
+          <div>
+            <dt>天气</dt>
+            <dd><strong id="weatherLabel">定位中</strong><span id="weatherMetaLabel">等待浏览器定位</span></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="insight-block selected-insight">
+        <p class="eyebrow">当前选择</p>
+        <div id="selectedSummary" class="selected-summary">
+          <strong>未选择</strong>
+          <span>等待选择配置对象</span>
+        </div>
+      </section>
+
+      <section class="insight-block priority-card">
+        <p class="eyebrow">优先级</p>
+        <div class="priority-flow">
+          <div><b>1</b><span>拒绝名单</span></div>
+          <div><b>2</b><span>整群放行</span></div>
+          <div><b>3</b><span>允许名单</span></div>
+          <div><b>4</b><span>默认拦截</span></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <div class="toast-layer" id="toastLayer"></div>
+  <script type="module" src="./app.js?v=product_design_20260624_fusion_console_12_persisted_tone"></script>
 </body>
 </html>

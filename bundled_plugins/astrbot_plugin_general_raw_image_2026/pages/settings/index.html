@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>通用生图 · 星轨配置台</title>
+  <link rel="stylesheet" href="./styles.css?v=20260622_welcome_home" />
+</head>
+<body data-active-tab="welcome">
+  <div class="boot-sequence" id="bootSequence" aria-hidden="true">
+    <div class="boot-core">
+      <div class="boot-rings"><i></i><i></i><i></i></div>
+      <img class="boot-logo" src="./plugin_logo.png?v=20260621_plugin_logo_fix" alt="" />
+      <div class="boot-text">
+        <div class="boot-title">RAW IMAGE CORE</div>
+        <div class="boot-subtitle">通用生图控制台正在启动</div>
+        <div class="boot-line"><span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="noise" aria-hidden="true"></div>
+  <div class="aurora-field" aria-hidden="true">
+    <span></span><span></span><span></span><span></span>
+  </div>
+  <div class="liquid-prism" aria-hidden="true">
+    <span></span><span></span><span></span>
+  </div>
+  <div class="star-grid" aria-hidden="true"></div>
+  <div class="cursor-glow" aria-hidden="true"></div>
+
+  <aside class="side-rail">
+    <section class="brand-card">
+      <div class="brand-orbit" aria-hidden="true"></div>
+      <img class="brand-mark plugin-brand-mark" src="./plugin_logo.png?v=20260621_plugin_logo_fix" alt="通用生图 Logo" />
+      <div class="brand-copy">
+        <span class="eyebrow">ASTRBOT IMAGE LAB</span>
+        <h1>通用生图控制台</h1>
+      </div>
+    </section>
+
+    <section class="side-meta" aria-label="运行概览">
+      <div><strong id="providerCount">0</strong><span>供应商</span></div>
+      <div><strong id="imageCount">0</strong><span>启动图</span></div>
+    </section>
+
+    <nav class="group-list" id="navList" aria-label="配置导航">
+      <button class="group-item" data-tab="generation" type="button">
+        <div class="group-avatar-placeholder default-avatar"><span>01</span></div>
+        <div><div class="group-name">生成任务流</div><div class="group-id-tag">generation pipeline</div></div>
+        <span class="group-chip">FLOW</span>
+      </button>
+      <button class="group-item" data-tab="providers" type="button">
+        <div class="group-avatar-placeholder default-avatar"><span>02</span></div>
+        <div><div class="group-name">供应商矩阵</div><div class="group-id-tag">api providers</div></div>
+        <span class="group-chip">CORE</span>
+      </button>
+      <button class="group-item" data-tab="limits" type="button">
+        <div class="group-avatar-placeholder default-avatar"><span>03</span></div>
+        <div><div class="group-name">权限与额度</div><div class="group-id-tag">limits policy</div></div>
+        <span class="group-chip">SAFE</span>
+      </button>
+      <button class="group-item" data-tab="tools" type="button">
+        <div class="group-avatar-placeholder default-avatar"><span>04</span></div>
+        <div><div class="group-name">工具调用桥</div><div class="group-id-tag">llm tool bridge</div></div>
+        <span class="group-chip">TOOL</span>
+      </button>
+      <button class="group-item" data-tab="raw" type="button">
+        <div class="group-avatar-placeholder default-avatar"><span>05</span></div>
+        <div><div class="group-name">原始配置</div><div class="group-id-tag">raw json</div></div>
+        <span class="group-chip">RAW</span>
+      </button>
+    </nav>
+
+    <section class="palette-dock" aria-label="外观控制">
+      <button id="paletteToggleBtn" class="dock-button" type="button"><span>配色</span><b id="paletteModeLabel">鎏金</b></button>
+      <button id="appearanceToggleBtn" class="dock-button" type="button"><span>明暗</span><b id="appearanceModeLabel">自动</b></button>
+      <button id="customBackgroundBtn" class="dock-button" type="button"><span>背景</span><b id="backgroundModeLabel">上传</b></button>
+      <button id="presetBackgroundBtn" class="dock-button ghost" type="button"><span>预设</span><b>恢复</b></button>
+      <button id="reloadBtn" class="dock-button ghost" type="button"><span>刷新</span><b>配置</b></button>
+      <input id="customBackgroundInput" type="file" accept="image/*" hidden>
+    </section>
+  </aside>
+
+  <main class="workspace">
+    <section class="config-panel" id="configPanel">
+      <header class="hero">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <div class="kicker">GENERAL RAW IMAGE 2026</div>
+            <h2 id="panelTitle">选择一个配置区，开始调校生图系统</h2>
+            <p id="panelHint">默认不会展开任何配置项。请从左侧选择生成任务流、供应商矩阵、权限额度或工具调用桥。</p>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="reactor">
+              <i></i><i></i><i></i>
+              <span></span>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div><b id="currentModel">未设置</b><span>当前模型</span></div>
+            <div><b id="startImageState">未设置</b><span>开始回复图</span></div>
+            <div><b id="limitState">未启用</b><span>使用限制</span></div>
+          </div>
+          <div class="hero-save-slot">
+            <button id="saveAllBtn" class="btn btn-primary" type="button">保存全部配置</button>
+          </div>
+        </div>
+      </header>
+
+      <section id="welcome" class="panel active"></section>
+      <section id="generation" class="panel" style="display:none"></section>
+      <section id="providers" class="panel" style="display:none"></section>
+      <section id="limits" class="panel" style="display:none"></section>
+      <section id="tools" class="panel" style="display:none"></section>
+      <section id="raw" class="panel" style="display:none"></section>
+    </section>
+  </main>
+
+  <div class="toast" id="toastLayer"></div>
+  <div class="confirm-mask" id="confirmMask">
+    <div class="confirm-box">
+      <div class="confirm-title">确认操作</div>
+      <div class="confirm-message" id="confirmMessage"></div>
+      <div class="confirm-actions">
+        <button class="btn btn-secondary" id="confirmCancelBtn">取消</button>
+        <button class="btn btn-primary" id="confirmOkBtn">确认</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./app.js?v=20260622_welcome_home"></script>
+</body>
+</html>

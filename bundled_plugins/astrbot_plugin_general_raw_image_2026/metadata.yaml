@@ -1,0 +1,7 @@
+name: astrbot_plugin_general_raw_image_2026
+display_name: 通用生图 General Raw Image 2026
+desc: 通用图像生成插件，支持多种图像生成模型和多样化的生成方式
+version: v1.2.8
+author: xiaokangzaina
+repo: https://github.com/xiaokangzaina/General-Raw-Image_2026
+astrbot_version: ">=4.10.4"

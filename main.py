@@ -6,6 +6,9 @@
 """
 
 import json
+import functools
+import importlib
+import inspect
 import logging
 from pathlib import Path
 from sys import maxsize
@@ -13,7 +16,12 @@ from sys import maxsize
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+from astrbot.core.agent.handoff import FunctionTool, HandoffTool
+from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.provider.register import llm_tools
+from astrbot.core.star.star import star_map, star_registry
+from astrbot.core.star.star_handler import star_handlers_registry
 
 try:
     from .web import PermissionWebController
@@ -23,14 +31,71 @@ except Exception:  # pragma: no cover - web 模块缺失时不影响核心功能
 REASONING_EVENT_EXTRA_KEY = "_permission_controller_reasoning_extra_body"
 REASONING_EVENT_LEVEL_KEY = "_permission_controller_reasoning_level"
 REASONING_PROVIDER_META_KEY = "_permission_controller_reasoning_runtime_meta"
-REASONING_PAYLOAD_PATCH_VERSION = "20260621_custom_extra_body_v6_quiet"
+REASONING_LOGGED_EVENT_KEY = "_permission_controller_reasoning_logged"
+REASONING_PAYLOAD_PATCH_VERSION = "20260622_custom_extra_body_v12_no_ultra"
+FUSION_RUNTIME_ACCESS_PATH = "fusion_access.enabled"
+FUSION_RUNTIME_ACCESS_LEGACY_PATHS = {
+    "groups": "fusion_access.enable_groups",
+    "privates": "fusion_access.enable_privates",
+}
+FUSION_RUNTIME_ACCESS_MODULES = {
+    "raw-image": "providers",
+    "aip-review": "global-policy",
+    "webshot": "targets",
+    "qqadmin": "actions",
+}
+FUSION_RUNTIME_ACCESS_EXTRA_PATHS = {
+    "qqadmin": {"groups": "default.group_admin_enabled"},
+}
+
+BUNDLED_PLUGIN_SPECS = (
+    {
+        "id": "raw-image",
+        "directory": "astrbot_plugin_general_raw_image_2026",
+        "module": "main",
+        "class_name": "ImageGenerationPlugin",
+        "title": "通用生图",
+        "display_name": "通用生图 General Raw Image 2026",
+        "author": "xiaokangzaina",
+        "version": "v1.2.8",
+    },
+    {
+        "id": "aip-review",
+        "directory": "astrbot_plugin_group_aip_review",
+        "module": "main",
+        "class_name": "GroupAipReviewPlugin",
+        "title": "安全审核",
+        "display_name": "群消息内容安全审核插件",
+        "author": "xiaokangzaina",
+        "version": "v1.5.1",
+    },
+    {
+        "id": "qqadmin",
+        "directory": "astrbot_plugin_qqadmin",
+        "module": "main",
+        "class_name": "QQAdminPlugin",
+        "title": "QQ群管",
+        "display_name": "QQ群管",
+        "author": "xiaokangzaina",
+        "version": "v3.3.8",
+    },
+    {
+        "id": "webshot",
+        "directory": "astrbot_plugin_webpage_screenshot",
+        "module": "main",
+        "class_name": "WebpageScreenshot",
+        "title": "网页截图",
+        "display_name": "网页实时获取截图",
+        "author": "xiaokangzaina",
+        "version": "v1.3.1",
+    },
+)
 
 REASONING_LEVEL_LABELS = {
     "": "默认",
     "low": "低",
     "medium": "中",
     "high": "高",
-    "ultra": "超高",
 }
 
 REASONING_LEVEL_ALIASES = {
@@ -49,11 +114,11 @@ REASONING_LEVEL_ALIASES = {
     "高": "high",
     "high": "high",
     "h": "high",
-    "超高": "ultra",
-    "最高": "ultra",
-    "ultra": "ultra",
-    "max": "ultra",
-    "maximum": "ultra",
+    "超高": "high",
+    "最高": "high",
+    "ultra": "high",
+    "max": "high",
+    "maximum": "high",
 }
 
 
@@ -143,6 +208,10 @@ class GroupUserWhitelistPlugin(Star):
         )
 
         self._register_web_page()
+        self._bundled_plugin_instances = []
+        self._bundled_plugin_errors = {}
+        self._bundled_plugins_initialized = False
+        self._load_bundled_plugins()
 
 
     def _register_web_page(self):
@@ -155,6 +224,392 @@ class GroupUserWhitelistPlugin(Star):
             logger.info("[PermissionController] 配置页 Web API 已注册")
         except Exception as exc:
             logger.warning("[PermissionController] 配置页注册失败: %s", exc)
+
+    @classmethod
+    def _bundled_base_package(cls) -> str:
+        return f"{__package__}.bundled_plugins"
+
+    @classmethod
+    def _bundled_module_name(cls, spec: dict) -> str:
+        return (
+            f"{cls._bundled_base_package()}.{spec['directory']}.{spec['module']}"
+        )
+
+    @classmethod
+    def _is_bundled_module_path(cls, module_path: str | None) -> bool:
+        if not module_path:
+            return False
+        base = cls._bundled_base_package()
+        return module_path == base or module_path.startswith(f"{base}.")
+
+    @staticmethod
+    def _callable_module_path(value) -> str:
+        handler = getattr(value, "func", value)
+        return str(getattr(handler, "__module__", "") or "")
+
+    def _plugin_data_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    def _bundled_plugin_dir(self, directory: str) -> Path:
+        return Path(__file__).resolve().parent / "bundled_plugins" / directory
+
+    def _bundled_config_path(self, directory: str) -> Path:
+        return self._plugin_data_dir() / "config" / f"{directory}_config.json"
+
+    def _load_bundled_config(self, directory: str):
+        plugin_dir = self._bundled_plugin_dir(directory)
+        schema_path = plugin_dir / "_conf_schema.json"
+        if not schema_path.exists():
+            return {}
+        schema = json.loads(schema_path.read_text(encoding="utf-8-sig") or "{}")
+        return AstrBotConfig(
+            config_path=str(self._bundled_config_path(directory)),
+            schema=schema,
+        )
+
+    def _remove_bundled_runtime_state(self) -> None:
+        for handler in list(star_handlers_registry):
+            if self._is_bundled_module_path(handler.handler_module_path):
+                star_handlers_registry.remove(handler)
+
+        for key in list(star_handlers_registry.star_handlers_map):
+            if self._is_bundled_module_path(key):
+                star_handlers_registry.star_handlers_map.pop(key, None)
+
+        for module_path, metadata in list(star_map.items()):
+            if self._is_bundled_module_path(module_path):
+                star_map.pop(module_path, None)
+                if metadata in star_registry:
+                    star_registry.remove(metadata)
+
+        for metadata in list(star_registry):
+            if self._is_bundled_module_path(metadata.module_path):
+                star_registry.remove(metadata)
+
+        for func_tool in list(llm_tools.func_list):
+            handler_module_path = str(getattr(func_tool, "handler_module_path", "") or "")
+            handler_path = self._callable_module_path(getattr(func_tool, "handler", None))
+            if self._is_bundled_module_path(handler_module_path) or self._is_bundled_module_path(handler_path):
+                llm_tools.func_list.remove(func_tool)
+
+    def _apply_bundled_metadata(self, spec: dict, module, plugin_cls, plugin_config) -> None:
+        module_name = module.__name__
+        metadata = star_map.get(module_name)
+        if metadata is None:
+            return
+
+        directory = str(spec["directory"])
+        metadata.name = directory
+        metadata.display_name = str(spec["display_name"])
+        metadata.author = str(spec["author"])
+        metadata.desc = f"已融合进 astrbot_plugin_permission_controller 的 {spec['title']} 模块"
+        metadata.version = str(spec["version"])
+        metadata.module_path = module_name
+        metadata.star_cls_type = plugin_cls
+        metadata.config = plugin_config
+        metadata.module = module
+        metadata.root_dir_name = "astrbot_plugin_permission_controller"
+        metadata.activated = True
+        metadata.reserved = False
+
+        setattr(plugin_cls, "name", directory)
+        setattr(plugin_cls, "author", str(spec["author"]))
+        setattr(plugin_cls, "plugin_id", f"{spec['author']}/{directory}")
+
+    def _hide_bundled_metadata_from_plugin_list(self, module_name: str) -> None:
+        metadata = star_map.get(module_name)
+        if metadata in star_registry:
+            star_registry.remove(metadata)
+
+    def _fusion_overrides_path(self) -> Path:
+        return Path(__file__).resolve().parent / "data" / "fusion_overrides.json"
+
+    def _read_fusion_runtime_overrides(self) -> dict:
+        try:
+            payload = json.loads(self._fusion_overrides_path().read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    def _bundled_plugin_id_from_module(self, module_name: str) -> str:
+        for spec in BUNDLED_PLUGIN_SPECS:
+            current = self._bundled_module_name(spec)
+            if module_name == current or module_name.startswith(f"{current}."):
+                return str(spec["id"])
+        return ""
+
+    @staticmethod
+    def _module_in_bundled_package(module_path: str, module_name: str) -> bool:
+        package_name = module_name.rsplit(".", 1)[0]
+        return module_path == module_name or module_path.startswith(f"{package_name}.")
+
+    @staticmethod
+    def _event_from_call_args(*args, **kwargs):
+        for value in list(args) + list(kwargs.values()):
+            if value is None:
+                continue
+            if hasattr(value, "get_group_id") or hasattr(value, "is_private_chat"):
+                return value
+            wrapped = getattr(value, "context", None)
+            event = getattr(wrapped, "event", None) or getattr(value, "event", None)
+            if event is not None:
+                return event
+            if isinstance(value, dict) and value.get("event") is not None:
+                return value.get("event")
+        return None
+
+    @classmethod
+    def _fusion_event_target(cls, event) -> tuple[str, str] | None:
+        if event is None:
+            return None
+        try:
+            if event.is_private_chat():
+                candidates = sorted(cls._private_sender_candidates_from_event(event))
+                return ("privates", candidates[0]) if candidates else None
+        except Exception:
+            pass
+
+        try:
+            group_id = str(event.get_group_id() or "").strip()
+            if group_id:
+                return "groups", group_id
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _fusion_module_values(state: dict, plugin_id: str, target_type: str, target_id: str, module_id: str) -> dict:
+        try:
+            values = (
+                state.get("plugins", {})
+                .get(plugin_id, {})
+                .get(target_type, {})
+                .get(target_id, {})
+                .get("modules", {})
+                .get(module_id, {})
+                .get("values", {})
+            )
+            return values if isinstance(values, dict) else {}
+        except Exception:
+            return {}
+
+    def _fusion_access_value(self, state: dict, plugin_id: str, target_type: str, target_id: str) -> bool:
+        module_id = FUSION_RUNTIME_ACCESS_MODULES.get(plugin_id)
+        if not module_id:
+            return True
+
+        candidate_paths = [
+            FUSION_RUNTIME_ACCESS_PATH,
+            FUSION_RUNTIME_ACCESS_LEGACY_PATHS.get(target_type, ""),
+            FUSION_RUNTIME_ACCESS_EXTRA_PATHS.get(plugin_id, {}).get(target_type, ""),
+        ]
+        for scope_type, scope_id in ((target_type, target_id), ("global", "default")):
+            values = self._fusion_module_values(state, plugin_id, scope_type, scope_id, module_id)
+            for path in candidate_paths:
+                if path and path in values:
+                    return bool(values[path])
+        return True
+
+    def _fusion_event_enabled(self, plugin_id: str, event) -> bool:
+        target = self._fusion_event_target(event)
+        if not plugin_id or target is None:
+            return True
+        target_type, target_id = target
+        enabled = self._fusion_access_value(
+            self._read_fusion_runtime_overrides(),
+            plugin_id,
+            target_type,
+            target_id,
+        )
+        if not enabled:
+            logger.debug(
+                "[PermissionController] 融合模块已按对象关闭：plugin=%s target=%s:%s",
+                plugin_id,
+                target_type,
+                target_id,
+            )
+        return enabled
+
+    def _wrap_bundled_callable(self, plugin_id: str, callback, disabled_result=None):
+        if getattr(callback, "_permission_controller_fusion_wrapped", False):
+            return callback
+
+        wrapped_target = getattr(callback, "func", callback)
+        is_async_callback = inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(wrapped_target)
+
+        if is_async_callback:
+            @functools.wraps(wrapped_target)
+            async def wrapped(*args, **kwargs):
+                event = self._event_from_call_args(*args, **kwargs)
+                if not self._fusion_event_enabled(plugin_id, event):
+                    return disabled_result
+                result = callback(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+        else:
+            @functools.wraps(wrapped_target)
+            def wrapped(*args, **kwargs):
+                event = self._event_from_call_args(*args, **kwargs)
+                if not self._fusion_event_enabled(plugin_id, event):
+                    return disabled_result
+                return callback(*args, **kwargs)
+
+        setattr(wrapped, "_permission_controller_fusion_wrapped", True)
+        return wrapped
+
+    def _bind_bundled_handlers(self, module_name: str, instance) -> list[str]:
+        plugin_id = self._bundled_plugin_id_from_module(module_name)
+        full_names = []
+        for handler in star_handlers_registry.get_handlers_by_module_name(module_name):
+            bound_handler = functools.partial(handler.handler, instance)
+            handler.handler = self._wrap_bundled_callable(plugin_id, bound_handler)
+            full_names.append(handler.handler_full_name)
+
+        for func_tool in list(llm_tools.func_list):
+            need_apply = []
+            if isinstance(func_tool, HandoffTool):
+                sub_tools = getattr(getattr(func_tool, "agent", None), "tools", None)
+                if sub_tools:
+                    need_apply.extend(
+                        sub_tool
+                        for sub_tool in sub_tools
+                        if isinstance(sub_tool, FunctionTool)
+                    )
+            else:
+                need_apply.append(func_tool)
+
+            for tool in need_apply:
+                handler = getattr(tool, "handler", None)
+                if handler and getattr(handler, "__module__", None) == module_name:
+                    tool.handler_module_path = module_name
+                    bound_tool_handler = functools.partial(handler, instance)
+                    tool.handler = self._wrap_bundled_callable(
+                        plugin_id,
+                        bound_tool_handler,
+                        "当前对象已关闭该插件，未执行工具调用。",
+                    )
+                    continue
+
+                call_method = getattr(tool, "call", None)
+                tool_module = str(getattr(type(tool), "__module__", "") or "")
+                if callable(call_method) and self._module_in_bundled_package(tool_module, module_name):
+                    try:
+                        tool.call = self._wrap_bundled_callable(
+                            plugin_id,
+                            call_method,
+                            "当前对象已关闭该插件，未执行工具调用。",
+                        )
+                    except Exception as exc:
+                        logger.debug("[PermissionController] 包装融合工具失败: %s", exc)
+        return full_names
+
+    def _load_bundled_plugins(self) -> None:
+        self._remove_bundled_runtime_state()
+        for spec in BUNDLED_PLUGIN_SPECS:
+            directory = str(spec["directory"])
+            module_name = self._bundled_module_name(spec)
+            try:
+                module = importlib.import_module(module_name)
+                module = importlib.reload(module)
+                plugin_cls = getattr(module, str(spec["class_name"]))
+                plugin_config = self._load_bundled_config(directory)
+                self._apply_bundled_metadata(spec, module, plugin_cls, plugin_config)
+                try:
+                    instance = plugin_cls(context=self.context, config=plugin_config)
+                except TypeError:
+                    instance = plugin_cls(context=self.context)
+                metadata = star_map.get(module_name)
+                if metadata is not None:
+                    metadata.star_cls = instance
+                    metadata.star_handler_full_names = self._bind_bundled_handlers(
+                        module_name,
+                        instance,
+                    )
+                self._hide_bundled_metadata_from_plugin_list(module_name)
+                self._bundled_plugin_instances.append(
+                    {"spec": spec, "module": module, "instance": instance}
+                )
+                logger.info("[PermissionController] 已融合子插件：%s", directory)
+            except Exception as exc:
+                self._bundled_plugin_errors[directory] = str(exc)
+                logger.exception("[PermissionController] 融合子插件失败：%s", directory)
+
+    def get_bundled_plugin_status(self) -> list[dict[str, object]]:
+        loaded = {
+            str(entry["spec"]["directory"]): entry
+            for entry in self._bundled_plugin_instances
+        }
+        result = []
+        for spec in BUNDLED_PLUGIN_SPECS:
+            directory = str(spec["directory"])
+            entry = loaded.get(directory)
+            result.append(
+                {
+                    "id": spec["id"],
+                    "directory": directory,
+                    "title": spec["title"],
+                    "display_name": spec["display_name"],
+                    "version": spec["version"],
+                    "loaded": entry is not None,
+                    "initialized": bool(
+                        entry and getattr(entry.get("instance"), "_fusion_initialized", False)
+                    ),
+                    "error": self._bundled_plugin_errors.get(directory, ""),
+                    "api_base": f"/{directory}",
+                    "bundled_page": (
+                        f"../../bundled_plugins/{directory}/pages/settings/index.html"
+                    ),
+                    "config_path": str(self._bundled_config_path(directory)),
+                }
+            )
+        return result
+
+    async def initialize(self):
+        if self._bundled_plugins_initialized:
+            return
+        self._bundled_plugins_initialized = True
+        for entry in self._bundled_plugin_instances:
+            spec = entry["spec"]
+            instance = entry["instance"]
+            initialize = getattr(instance, "initialize", None)
+            if not callable(initialize):
+                continue
+            try:
+                result = initialize()
+                if inspect.isawaitable(result):
+                    await result
+                module_name = self._bundled_module_name(spec)
+                metadata = star_map.get(module_name)
+                rebound_handlers = self._bind_bundled_handlers(module_name, instance)
+                if metadata is not None and rebound_handlers:
+                    metadata.star_handler_full_names = rebound_handlers
+                setattr(instance, "_fusion_initialized", True)
+                logger.info("[PermissionController] 子插件已初始化：%s", spec["directory"])
+            except Exception as exc:
+                self._bundled_plugin_errors[str(spec["directory"])] = str(exc)
+                logger.exception(
+                    "[PermissionController] 子插件初始化失败：%s",
+                    spec["directory"],
+                )
+
+    async def terminate(self):
+        for entry in reversed(self._bundled_plugin_instances):
+            spec = entry["spec"]
+            instance = entry["instance"]
+            terminate = getattr(instance, "terminate", None)
+            if not callable(terminate):
+                continue
+            try:
+                result = terminate()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception(
+                    "[PermissionController] 子插件卸载失败：%s",
+                    spec["directory"],
+                )
+        self._remove_bundled_runtime_state()
 
     def reload_runtime_config(self):
         """供配置页保存后调用：重新读取配置并刷新运行时缓存。"""
@@ -559,12 +1014,6 @@ class GroupUserWhitelistPlugin(Star):
             return {"reasoning_effort": "medium"}
         if level == "high":
             return {"reasoning_effort": "high"}
-        if level == "ultra":
-            # 标准 OpenAI-compatible 至少会按 high 处理；部分兼容服务会读取 reasoning.effort。
-            return {
-                "reasoning_effort": "high",
-                "reasoning": {"effort": "high"},
-            }
         return {}
 
     def _resolve_reasoning_effort(self, event: AstrMessageEvent) -> str:
@@ -581,6 +1030,7 @@ class GroupUserWhitelistPlugin(Star):
 
         group_id = str(event.get_group_id() or "").strip()
         sender_id = str(event.get_sender_id() or "").strip()
+
         if group_id and sender_id:
             effort = self.reasoning_group_user_rules.get(f"{sender_id}-{group_id}")
             if effort:
@@ -740,11 +1190,6 @@ class GroupUserWhitelistPlugin(Star):
             return
         event.set_extra(REASONING_EVENT_EXTRA_KEY, extra_body)
         event.set_extra(REASONING_EVENT_LEVEL_KEY, level)
-        logger.info(
-            "[PermissionController] 思考强度: %s (%s)",
-            REASONING_LEVEL_LABELS.get(level, level or "默认"),
-            self._reasoning_event_scope(event),
-        )
 
     @classmethod
     def _install_reasoning_payload_patch(cls):
@@ -803,7 +1248,16 @@ class GroupUserWhitelistPlugin(Star):
             original_query_stream
         )
 
+        def clear_runner_reasoning_state(runner_self) -> None:
+            for attr in (REASONING_EVENT_EXTRA_KEY, REASONING_EVENT_LEVEL_KEY):
+                try:
+                    if hasattr(runner_self, attr):
+                        delattr(runner_self, attr)
+                except Exception:
+                    pass
+
         async def patched_reset(runner_self, *args, **kwargs):
+            clear_runner_reasoning_state(runner_self)
             result = await original_reset(runner_self, *args, **kwargs)
             try:
                 event = cls._event_from_runner(runner_self)
@@ -895,6 +1349,7 @@ class GroupUserWhitelistPlugin(Star):
             had_custom_extra_body = False
             had_meta = False
             original_meta = None
+            modified_provider_config = False
             try:
                 event = cls._event_from_runner(runner_self)
                 if event is None:
@@ -912,9 +1367,6 @@ class GroupUserWhitelistPlugin(Star):
                 extra_body = event_extra_body
                 level = event_level
                 if not isinstance(extra_body, dict) or not extra_body:
-                    extra_body = getattr(runner_self, REASONING_EVENT_EXTRA_KEY, None)
-                    level = getattr(runner_self, REASONING_EVENT_LEVEL_KEY, level)
-                if not isinstance(extra_body, dict) or not extra_body:
                     if event is not None:
                         level, scope = cls._resolve_runtime_reasoning_effort(event)
                         extra_body = cls._reasoning_extra_body_for_level(level)
@@ -925,7 +1377,24 @@ class GroupUserWhitelistPlugin(Star):
                             except Exception:
                                 pass
                     else:
-                        extra_body = {}
+                        extra_body = getattr(
+                            runner_self, REASONING_EVENT_EXTRA_KEY, None
+                        )
+                        level = getattr(runner_self, REASONING_EVENT_LEVEL_KEY, level)
+                if not isinstance(extra_body, dict) or not extra_body:
+                    extra_body = {}
+                if (
+                    event is not None
+                    and isinstance(extra_body, dict)
+                    and extra_body
+                    and not event.get_extra(REASONING_LOGGED_EVENT_KEY, False)
+                ):
+                    logger.info(
+                        "[PermissionController] 思考强度: %s (%s)",
+                        REASONING_LEVEL_LABELS.get(level, level or "默认"),
+                        scope,
+                    )
+                    event.set_extra(REASONING_LOGGED_EVENT_KEY, True)
                 if (
                     isinstance(provider_config, dict)
                     and isinstance(extra_body, dict)
@@ -939,6 +1408,7 @@ class GroupUserWhitelistPlugin(Star):
                     if isinstance(original_custom_extra_body, dict):
                         merged_extra_body.update(original_custom_extra_body)
                     merged_extra_body.update(extra_body)
+                    modified_provider_config = True
                     provider_config["custom_extra_body"] = merged_extra_body
 
                     had_meta = REASONING_PROVIDER_META_KEY in provider_config
@@ -960,7 +1430,7 @@ class GroupUserWhitelistPlugin(Star):
                 async for resp in original_iter(runner_self, *args, **kwargs):
                     yield resp
             finally:
-                if isinstance(provider_config, dict):
+                if modified_provider_config and isinstance(provider_config, dict):
                     if had_custom_extra_body:
                         provider_config["custom_extra_body"] = (
                             original_custom_extra_body
@@ -1137,6 +1607,42 @@ class GroupUserWhitelistPlugin(Star):
             rules.setdefault(group_id, set()).add(user_id)
         return rules
 
+    def _decide_group_access(self, group_id: str, sender_id: str) -> tuple[bool, str]:
+        """判定一次群聊 AI 调用是否允许。
+
+        规则只表达两个核心目标：
+        - 指定人可以在指定群调用；
+        - 指定人不能在指定群调用。
+
+        整群放行和全局群聊黑名单保留为兼容能力。返回值第二项用于调试日志，
+        不参与业务判断。
+        """
+        group_id = str(group_id or "").strip()
+        sender_id = str(sender_id or "").strip()
+        is_admin = self._is_admin(sender_id)
+
+        if self.enable_group_blacklist and sender_id in self.group_blacklist:
+            if self.admin_bypass and is_admin:
+                return True, "admin_bypass_group_blacklist"
+            return False, "group_blacklist"
+
+        if not self.enable_group_rules:
+            return True, "group_rules_disabled"
+
+        if self.admin_bypass and is_admin:
+            return True, "admin_bypass"
+
+        if sender_id and sender_id in self.deny_rules.get(group_id, set()):
+            return False, "group_user_denied"
+
+        if group_id in self.allowed_groups:
+            return True, "group_allowed"
+
+        if sender_id and sender_id in self.rules.get(group_id, set()):
+            return True, "group_user_allowed"
+
+        return False, "no_matching_group_rule"
+
     def _is_admin(self, sender_id: str) -> bool:
         """判断发送者是否是 AstrBot 全局管理员。"""
         sender_id = str(sender_id).strip()
@@ -1200,44 +1706,26 @@ class GroupUserWhitelistPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=maxsize)
     async def check_group_user_whitelist(self, event: AstrMessageEvent):
-        """群聊权限入口：黑名单优先，其次按管理员和放行规则判断。"""
+        """群聊权限入口：只拦截 AI 唤醒/艾特调用，不影响普通群消息插件。"""
         if self._is_non_chat_raw_event(event) or self._is_dashboard_chat_event(event):
             return
 
         group_id = str(event.get_group_id() or "").strip()
         sender_id = str(event.get_sender_id() or "").strip()
 
-        # 黑名单优先级最高；但允许平台管理员按 admin_bypass 配置绕过。
-        if self.enable_group_blacklist and sender_id in self.group_blacklist:
-            if self.admin_bypass and self._is_admin(sender_id):
-                self._apply_reasoning_effort_for_event(event)
-                return
-            event.stop_event()
+        # 只控制“调用机器人/模型”的消息；普通群聊图片、文本等被动插件应继续收到。
+        if not bool(getattr(event, "is_at_or_wake_command", False)):
             return
 
-        if not self.enable_group_rules:
-            self._apply_reasoning_effort_for_event(event)
-            return
-
-        # 严格群聊权限：群聊规则开启后，只有两种情况放行：
-        # 1. 群号在“放行权限 QQ 群聊列表”中，整个群放行；
-        # 2. 命中“放行权限 QQ 列表”的 用户QQ-群号 组合。
-        # 未配置的群、未配置的用户一律拦截，避免“未填写群号仍可调用”。
-        if self.admin_bypass and self._is_admin(sender_id):
-            self._apply_reasoning_effort_for_event(event)
-            return
-
-        denied_users = self.deny_rules.get(group_id, set())
-        if sender_id and sender_id in denied_users:
-            event.stop_event()
-            return
-
-        if group_id in self.allowed_groups:
-            self._apply_reasoning_effort_for_event(event)
-            return
-
-        allowed_users = self.rules.get(group_id, set())
-        if sender_id and sender_id in allowed_users:
+        allowed, reason = self._decide_group_access(group_id, sender_id)
+        logger.debug(
+            "[PermissionController] group access decision: allowed=%s reason=%s group=%s sender=%s",
+            allowed,
+            reason,
+            group_id,
+            sender_id,
+        )
+        if allowed:
             self._apply_reasoning_effort_for_event(event)
             return
 

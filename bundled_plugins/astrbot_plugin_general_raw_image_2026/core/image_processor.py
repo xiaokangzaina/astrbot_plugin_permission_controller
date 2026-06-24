@@ -1,0 +1,282 @@
+"""
+图片处理模块 - 下载、提取、临时文件保存
+"""
+
+from __future__ import annotations
+
+import hashlib
+import ntpath
+import os
+import posixpath
+from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlparse
+
+import astrbot.api.message_components as Comp
+from astrbot.api import logger
+from astrbot.core.utils.io import download_image_by_url
+
+from .logging_utils import log_prefix, mask_sensitive, safe_log_url
+
+if TYPE_CHECKING:
+    from astrbot.api.event import AstrMessageEvent
+
+
+LOG = log_prefix("ImageProcessor")
+
+
+class ImageProcessor:
+    """图片处理器 - 负责图片下载、提取和临时文件保存。"""
+
+    def __init__(
+        self,
+        temp_dir: str,
+        max_image_size_mb: int,
+        local_base_dir: str | None = None,
+    ) -> None:
+        self._temp_dir = temp_dir
+        self._max_image_size_mb = max_image_size_mb
+        self._local_base_dir = (
+            os.path.realpath(local_base_dir) if local_base_dir else ""
+        )
+        self._ensure_temp_dir()
+
+    def _ensure_temp_dir(self) -> None:
+        """确保临时目录存在。"""
+        os.makedirs(self._temp_dir, exist_ok=True)
+
+    def update_settings(self, max_image_size_mb: int | None = None) -> None:
+        """更新设置。"""
+        if max_image_size_mb is not None:
+            self._max_image_size_mb = max_image_size_mb
+
+    @property
+    def temp_dir(self) -> str:
+        """获取临时目录路径。"""
+        return self._temp_dir
+
+    def _resolve_local_path(self, value: str) -> str | None:
+        """Resolve an absolute local path, file:// URI, or plugin file path."""
+        value = self._normalize_local_path_value(value)
+        candidates = []
+        if self._is_absolute_path(value):
+            candidates.append(value)
+        elif self._local_base_dir and value.replace("\\", "/").startswith("files/"):
+            candidate = os.path.realpath(os.path.join(self._local_base_dir, value))
+            try:
+                if (
+                    os.path.commonpath([self._local_base_dir, candidate])
+                    != self._local_base_dir
+                ):
+                    return None
+            except ValueError:
+                return None
+            candidates.append(candidate)
+
+        for candidate in candidates:
+            path = os.path.realpath(candidate)
+            if os.path.exists(path) and os.path.isfile(path):
+                return path
+            logger.warning(f"{LOG} 本地参考图不存在或不是文件: {safe_log_url(path)}")
+        return None
+
+    def _is_absolute_path(self, value: str) -> bool:
+        """Return whether a value is a Linux/Windows absolute path."""
+        return os.path.isabs(value) or ntpath.isabs(value) or posixpath.isabs(value)
+
+    def _is_network_url(self, value: str) -> bool:
+        """Return whether a value is an HTTP(S) image source."""
+        scheme = urlparse(value).scheme.lower()
+        return scheme in {"http", "https"}
+
+    def _normalize_local_path_value(self, value: str) -> str:
+        """Normalize local file paths, including file:// URI values."""
+        value = value.strip()
+        if not value.lower().startswith("file:"):
+            return value
+
+        parsed = urlparse(value)
+        if parsed.scheme.lower() != "file":
+            return value
+
+        netloc = unquote(parsed.netloc)
+        path = unquote(parsed.path)
+        if netloc and netloc.lower() != "localhost" and path:
+            path = f"//{netloc}{path}"
+        elif netloc and netloc.lower() != "localhost":
+            path = netloc
+
+        # AstrBot/平台可能传入 file:///E:\path 或 file:///E:/path。
+        if len(path) >= 3 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+        return os.path.normpath(path)
+
+    async def download_image(self, url: str) -> tuple[bytes, str] | None:
+        """下载或读取图片并返回二进制数据和 MIME 类型。"""
+        try:
+            url = url.strip()
+            if not url:
+                return None
+
+            data: bytes | None = None
+            if local_path := self._resolve_local_path(url):
+                with open(local_path, "rb") as f:
+                    data = f.read()
+            else:
+                if not self._is_network_url(url):
+                    logger.warning(f"{LOG} 不支持的图片来源: {safe_log_url(url)}")
+                    return None
+                # 使用插件临时目录
+                file_name = f"ref_{hashlib.md5(url.encode()).hexdigest()[:10]}"
+                path = os.path.join(self._temp_dir, file_name)
+                path = await download_image_by_url(url, path=path)
+                if path:
+                    with open(path, "rb") as f:
+                        data = f.read()
+
+            if not data:
+                return None
+
+            if len(data) > self._max_image_size_mb * 1024 * 1024:
+                logger.warning(f"{LOG} 图片超过大小限制 ({self._max_image_size_mb}MB)")
+                return None
+
+            mime = self._detect_mime_type(data)
+            return data, mime
+        except Exception as exc:
+            logger.error(f"{LOG} 获取图片失败: {safe_log_url(url)} ({exc})")
+        return None
+
+    def _detect_mime_type(self, data: bytes) -> str:
+        """检测图片 MIME 类型。"""
+        if data.startswith(b"\xff\xd8"):
+            return "image/jpeg"
+        elif data.startswith(b"GIF"):
+            return "image/gif"
+        elif data.startswith(b"RIFF") and b"WEBP" in data[:16]:
+            return "image/webp"
+        return "image/png"
+
+    async def get_avatar(self, user_id: str) -> bytes | None:
+        """获取用户头像。"""
+        url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={user_id}&spec=640"
+        try:
+            file_name = f"avatar_{user_id}.jpg"
+            path = os.path.join(self._temp_dir, file_name)
+            path = await download_image_by_url(url, path=path)
+            if path:
+                with open(path, "rb") as f:
+                    return f.read()
+        except Exception as e:
+            logger.debug(f"{LOG} 获取头像失败 (user_id={mask_sensitive(user_id)}): {e}")
+        return None
+
+    def _message_body_leading_component(self, event: AstrMessageEvent):
+        """Return the first non-reply, non-empty message component."""
+        if not event.message_obj or not event.message_obj.message:
+            return None
+
+        for component in event.message_obj.message:
+            if isinstance(component, Comp.Reply):
+                continue
+            if isinstance(component, Comp.Plain) and not component.text.strip():
+                continue
+            return component
+        return None
+
+    def _has_reply_from_bot(self, event: AstrMessageEvent, bot_self_id: str) -> bool:
+        """Return whether the current event replies to a bot-sent message."""
+        if not bot_self_id or not event.message_obj or not event.message_obj.message:
+            return False
+
+        for component in event.message_obj.message:
+            if not isinstance(component, Comp.Reply):
+                continue
+            for value in (component.sender_id, component.qq):
+                if value is not None and str(value).strip() == bot_self_id:
+                    return True
+        return False
+
+    def _should_skip_leading_bot_at(
+        self,
+        event: AstrMessageEvent,
+        bot_self_id: str,
+    ) -> bool:
+        """Return whether the leading bot mention is only the command trigger."""
+        if not bot_self_id or self._has_reply_from_bot(event, bot_self_id):
+            return False
+
+        leading_component = self._message_body_leading_component(event)
+        if not isinstance(leading_component, Comp.At):
+            return False
+
+        return str(leading_component.qq).strip() == bot_self_id
+
+    async def fetch_images_from_event(
+        self,
+        event: AstrMessageEvent,
+        avatar_user_ids: set[str] | None = None,
+    ) -> list[tuple[bytes, str]]:
+        """从消息事件中提取图片（包括直接发送的图片、引用消息中的图片、被@用户的头像）。"""
+        images_data: list[tuple[bytes, str]] = []
+        if avatar_user_ids is None:
+            avatar_user_ids = set()
+
+        if not event.message_obj or not event.message_obj.message:
+            return images_data
+
+        bot_self_id = str(event.get_self_id()) if hasattr(event, "get_self_id") else ""
+        should_skip_leading_bot_at = self._should_skip_leading_bot_at(
+            event,
+            bot_self_id,
+        )
+        leading_bot_at_skipped = False
+
+        for component in event.message_obj.message:
+            try:
+                if isinstance(component, Comp.Image):
+                    # 处理直接发送的图片
+                    url = component.url or component.file
+                    if url and (data := await self.download_image(url)):
+                        images_data.append(data)
+                elif isinstance(component, Comp.Reply):
+                    # 处理引用消息中的图片
+                    if component.chain:
+                        for sub_comp in component.chain:
+                            if isinstance(sub_comp, Comp.Image):
+                                url = sub_comp.url or sub_comp.file
+                                if url and (data := await self.download_image(url)):
+                                    images_data.append(data)
+                elif isinstance(component, Comp.At):
+                    # 处理 @ 用户的头像
+                    if hasattr(component, "qq") and component.qq != "all":
+                        uid = str(component.qq).strip()
+                        if (
+                            should_skip_leading_bot_at
+                            and not leading_bot_at_skipped
+                            and uid == bot_self_id
+                        ):
+                            leading_bot_at_skipped = True
+                            continue
+                        if uid in avatar_user_ids:
+                            continue
+                        avatar_user_ids.add(uid)
+                        if avatar_data := await self.get_avatar(uid):
+                            images_data.append((avatar_data, "image/jpeg"))
+            except Exception as e:
+                logger.error(f"{LOG} 提取消息组件图片失败: {e}", exc_info=True)
+                continue
+        return images_data
+
+    def save_generated_image(self, task_id: str, img_bytes: bytes) -> str | None:
+        """保存生成的图片到临时目录，返回文件路径。"""
+        try:
+            import time
+
+            file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}.png"
+            file_path = os.path.join(self._temp_dir, file_name)
+            with open(file_path, "wb") as f:
+                f.write(img_bytes)
+            return file_path
+        except Exception as exc:
+            logger.error(f"{LOG} 保存图片失败: {exc}", exc_info=True)
+            return None

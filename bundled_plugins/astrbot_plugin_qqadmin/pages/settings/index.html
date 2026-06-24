@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QQ群管 · 星轨控制台</title>
+    <link rel="stylesheet" href="./styles.css?v=20260623_qqadmin_align3" />
+</head>
+<body data-active-tab="qqadmin">
+    <div class="boot-sequence" id="bootSequence" aria-hidden="true">
+        <div class="boot-core">
+            <div class="boot-rings"><i></i><i></i><i></i></div>
+            <img class="boot-logo" src="./assets/qqadmin-brand.jpg" alt="" />
+            <div class="boot-text">
+                <div class="boot-title">QQ ADMIN CORE</div>
+                <div class="boot-subtitle">QQ群管星轨控制台正在启动</div>
+                <div class="boot-line"><span></span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="noise" aria-hidden="true"></div>
+    <div class="aurora-field" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <div class="liquid-prism" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="star-grid" aria-hidden="true"></div>
+    <div class="cursor-glow" aria-hidden="true"></div>
+
+    <aside class="sidebar side-rail">
+        <section class="sidebar-header brand-card">
+            <div class="brand-orbit" aria-hidden="true"></div>
+            <div class="brand">
+                <div class="brand-mark"><img src="./assets/qqadmin-brand.jpg" alt="QQ群管图标" /></div>
+                <div class="brand-copy">
+                    <span class="eyebrow">ASTRBOT GROUP GUARD</span>
+                    <h2>QQ群管控制台</h2>
+                    <p>群聊治理 · 默认模板 · 精细化配置</p>
+                </div>
+            </div>
+            <div class="sidebar-stats side-meta">
+                <div class="stat-pill"><b id="totalGroups">0</b><span>群聊</span></div>
+                <div class="stat-pill"><b id="totalFields">0</b><span>配置项</span></div>
+                <div class="stat-pill"><b id="currentGroupBadge">默认</b><span>当前</span></div>
+            </div>
+        </section>
+
+        <section class="toolbar-stack sidebar-search palette-dock" aria-label="群搜索">
+            <label class="toolbar-field grow">
+                <input id="groupSearchInput" type="search" placeholder="搜索群名或群号" aria-label="搜索群名或群号" />
+            </label>
+        </section>
+
+        <section class="list-meta-row dock-row" aria-label="群列表工具">
+            <span id="groupListCount">0 个群</span>
+            <div class="list-action-cluster">
+                <button class="mini-link dock-button ghost" id="refreshGroupsBtn" type="button"><span>刷新</span><b>群列表</b></button>
+                <button class="theme-toggle dock-button" id="toggleThemeBtn" type="button" title="切换主题：自动 / 深色 / 浅色">
+                    <span>明暗</span><b>自动</b>
+                </button>
+            </div>
+        </section>
+
+        <nav id="groupList" class="group-list empty-state" aria-label="群配置列表">
+            群列表加载后会显示在这里。
+        </nav>
+    </aside>
+
+    <main class="main-content workspace">
+        <section class="empty-state hero-empty" id="emptyState">
+            <div class="empty-panel hero-card">
+                <div class="icon reactor"><i></i><i></i><i></i><span></span></div>
+                <div class="hero-copy">
+                    <p class="kicker">QQ ADMIN CORE</p>
+                    <h3>选择左侧群聊开始配置</h3>
+                    <p>默认模板会作为新群基础配置；普通群可独立配置，也可跟随默认模板。</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="configPanel" class="config-panel" style="display:none">
+            <header class="config-hero hero">
+                <div class="hero-card">
+                    <div class="hero-copy">
+                        <p class="eyebrow kicker">QQ 群管 · 星轨配置中心</p>
+                        <h1 id="currentGroupName" class="detail-page-title">未选择群</h1>
+                        <p class="hero-desc" id="panelHint">按模块调整群管能力，保存后立即生效。</p>
+                    </div>
+                    <div class="hero-visual" aria-hidden="true"><div class="reactor"><i></i><i></i><i></i><span></span></div></div>
+                    <div class="stat-grid">
+                        <div><b id="heroGroupCount">0</b><span>群聊总数</span></div>
+                        <div><b id="heroFieldCount">0</b><span>配置字段</span></div>
+                        <div><b id="heroCurrentMode">默认</b><span>当前目标</span></div>
+                    </div>
+                    <div class="hero-actions hero-save-slot">
+                        <button class="ghost-button btn btn-secondary" id="resetGroupBtn" type="button">恢复当前项默认值</button>
+                        <button class="primary-button btn btn-primary" id="saveGroupBtn" type="button">保存当前项配置</button>
+                    </div>
+                </div>
+            </header>
+
+            <div id="groupDetailContent" class="detail-stack panel active">
+                <div id="groupForm" class="form-stack"></div>
+            </div>
+        </section>
+    </main>
+
+    <div class="toast-layer toast" id="toastLayer"></div>
+    <script type="module" src="./app.js?v=20260623_qqadmin_align3"></script>
+</body>
+</html>

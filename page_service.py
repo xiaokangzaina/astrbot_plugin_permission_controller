@@ -51,7 +51,6 @@ REASONING_LEVEL_LABELS = {
     "low": "低",
     "medium": "中",
     "high": "高",
-    "ultra": "超高",
 }
 
 REASONING_LEVEL_ALIASES = {
@@ -70,11 +69,11 @@ REASONING_LEVEL_ALIASES = {
     "高": "high",
     "high": "high",
     "h": "high",
-    "超高": "ultra",
-    "最高": "ultra",
-    "ultra": "ultra",
-    "max": "ultra",
-    "maximum": "ultra",
+    "超高": "high",
+    "最高": "high",
+    "ultra": "high",
+    "max": "high",
+    "maximum": "high",
 }
 
 
@@ -150,11 +149,13 @@ class PermissionPageService:
         }
 
     async def list_groups(self, force: bool = False) -> list[dict[str, Any]]:
-        """返回机器人已加入的 QQ 群列表；失败时回退到配置中的群号。"""
+        """返回机器人已加入的 QQ 群列表；实时列表不可用时才回退到配置群号。"""
         groups: dict[str, dict[str, Any]] = {}
+        live_loaded = False
         for client in self._iter_qq_clients():
             try:
                 result = await client.call_action("get_group_list")
+                live_loaded = True
                 for item in self._extract_group_list(result):
                     group_id = str(item.get("group_id", "")).strip()
                     if not group_id or group_id in groups:
@@ -162,16 +163,19 @@ class PermissionPageService:
                     groups[group_id] = self._normalize_group_item(item)
             except Exception as exc:
                 logger.debug("[PermissionController] 获取群列表失败: %s", exc)
-        for item in self._build_configured_groups(self._read_current_config()):
-            groups.setdefault(item["group_id"], item)
+        if not live_loaded:
+            for item in self._build_configured_groups(self._read_current_config()):
+                groups.setdefault(item["group_id"], item)
         return self._sort_groups_by_recent_config(groups.values())
 
     async def list_private_contacts(self, force: bool = False) -> list[dict[str, Any]]:
-        """返回机器人已添加的 QQ 好友列表；失败时回退到 private_chat_users 配置。"""
+        """返回机器人已添加的 QQ 好友列表；实时列表不可用时才回退到配置好友。"""
         contacts: dict[str, dict[str, Any]] = {}
+        live_loaded = False
         for client in self._iter_qq_clients():
             try:
                 result = await client.call_action("get_friend_list")
+                live_loaded = True
                 for item in self._extract_friend_list(result):
                     user_id = str(item.get("user_id", "")).strip()
                     if not user_id or user_id in contacts:
@@ -179,11 +183,12 @@ class PermissionPageService:
                     contacts[user_id] = self._normalize_friend_item(item)
             except Exception as exc:
                 logger.debug("[PermissionController] 获取好友列表失败: %s", exc)
-        config = self._read_current_config()
-        for user_id in _normalize_list(config.get("private_chat_users")):
-            contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
-        for user_id in _reasoning_map(config.get("reasoning_private_users")):
-            contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
+        if not live_loaded:
+            config = self._read_current_config()
+            for user_id in _normalize_list(config.get("private_chat_users")):
+                contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
+            for user_id in _reasoning_map(config.get("reasoning_private_users")):
+                contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
         return sorted(
             contacts.values(),
             key=lambda item: str(item.get("nickname") or item.get("remark") or item.get("user_id") or ""),
