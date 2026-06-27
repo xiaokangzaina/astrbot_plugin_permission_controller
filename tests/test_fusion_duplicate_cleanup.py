@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 from astrbot.core.provider.register import llm_tools
@@ -79,6 +80,17 @@ class FusionDuplicateCleanupTest(unittest.TestCase):
         self.assertNotIn(duplicate_tool, llm_tools.func_list)
         self.assertNotIn(duplicate_callable_tool, llm_tools.func_list)
         self.assertIn(keep_tool, llm_tools.func_list)
+
+    def test_late_cleanup_hooks_remove_and_schedule_followup(self):
+        plugin = object.__new__(GroupUserWhitelistPlugin)
+        calls = []
+        plugin._remove_standalone_fusion_runtime_state = lambda: calls.append("remove")
+        plugin._schedule_standalone_fusion_cleanup = lambda: calls.append("schedule")
+
+        asyncio.run(plugin.cleanup_standalone_fusion_runtime_after_plugin_loaded(object()))
+        asyncio.run(plugin.cleanup_standalone_fusion_runtime_after_astrbot_loaded())
+
+        self.assertEqual(calls, ["remove", "schedule", "remove", "schedule"])
 
 
 if __name__ == "__main__":

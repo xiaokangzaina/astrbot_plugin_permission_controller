@@ -113,6 +113,11 @@ data/plugins/astrbot_plugin_permission_controller
 
 ## 版本
 
+### v3.0.7
+
+- Add late and deferred duplicate-runtime cleanup after plugin load and AstrBot load events.
+- Fix disabled standalone QQAdmin being imported during AstrBot plugin scanning and re-registering commands after a global plugin reload.
+
 ### v3.0.6
 
 - Remove stale runtime handlers and LLM tools left by standalone copies of the fused plugins before loading bundled fusion modules.

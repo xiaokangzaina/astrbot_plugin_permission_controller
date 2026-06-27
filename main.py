@@ -6,6 +6,7 @@
 """
 
 import json
+import asyncio
 import functools
 import importlib
 import inspect
@@ -144,7 +145,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "权限控制台：统一管理权限控制、融合模块、背景音乐和按钮音效",
-    "3.0.6",
+    "3.0.7",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
@@ -337,6 +338,39 @@ class GroupUserWhitelistPlugin(Star):
                 removed_handlers,
                 removed_tools,
             )
+
+    async def _deferred_remove_standalone_fusion_runtime_state(self) -> None:
+        for delay in (0.2, 1.0, 3.0):
+            await asyncio.sleep(delay)
+            try:
+                self._remove_standalone_fusion_runtime_state()
+            except Exception as exc:
+                logger.debug(
+                    "[PermissionController] deferred duplicate fusion cleanup failed: %s",
+                    exc,
+                )
+
+    def _schedule_standalone_fusion_cleanup(self) -> None:
+        try:
+            task = getattr(self, "_standalone_fusion_cleanup_task", None)
+            if task is not None and not task.done():
+                return
+            loop = asyncio.get_running_loop()
+            self._standalone_fusion_cleanup_task = loop.create_task(
+                self._deferred_remove_standalone_fusion_runtime_state()
+            )
+        except RuntimeError:
+            self._remove_standalone_fusion_runtime_state()
+
+    @filter.on_plugin_loaded(priority=maxsize)
+    async def cleanup_standalone_fusion_runtime_after_plugin_loaded(self, metadata=None):
+        self._remove_standalone_fusion_runtime_state()
+        self._schedule_standalone_fusion_cleanup()
+
+    @filter.on_astrbot_loaded(priority=maxsize)
+    async def cleanup_standalone_fusion_runtime_after_astrbot_loaded(self):
+        self._remove_standalone_fusion_runtime_state()
+        self._schedule_standalone_fusion_cleanup()
 
     def _apply_bundled_metadata(self, spec: dict, module, plugin_cls, plugin_config) -> None:
         module_name = module.__name__
@@ -600,6 +634,7 @@ class GroupUserWhitelistPlugin(Star):
             except Exception as exc:
                 self._bundled_plugin_errors[directory] = str(exc)
                 logger.exception("[PermissionController] 融合子插件失败：%s", directory)
+        self._schedule_standalone_fusion_cleanup()
 
     def get_bundled_plugin_status(self) -> list[dict[str, object]]:
         loaded = {
