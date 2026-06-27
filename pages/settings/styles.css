@@ -2617,17 +2617,18 @@ body.sound-bgm-on .compact-bars i:nth-child(4),
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(5, 8, 13, .10), rgba(5, 8, 13, .18)),
-    radial-gradient(70% 60% at 12% 0%, rgba(36, 200, 232, .08), transparent 58%),
-    radial-gradient(80% 70% at 92% 8%, rgba(255, 106, 168, .07), transparent 56%);
+    linear-gradient(180deg, rgba(5, 8, 13, .06), rgba(5, 8, 13, .11)),
+    radial-gradient(70% 60% at 12% 0%, rgba(36, 200, 232, .05), transparent 58%),
+    radial-gradient(80% 70% at 92% 8%, rgba(255, 106, 168, .045), transparent 56%);
 }
 
 .custom-background-media {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
+  background: rgba(5, 7, 11, .32);
   filter: saturate(1.05) contrast(1.02) brightness(.96);
 }
 
@@ -2643,7 +2644,7 @@ body.has-custom-background .console-shell {
   position: relative;
   z-index: 1;
   background:
-    linear-gradient(120deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .015)),
+    linear-gradient(120deg, rgba(255, 255, 255, .025), rgba(255, 255, 255, .006)),
     transparent;
 }
 
@@ -2674,21 +2675,21 @@ body.has-custom-background .console-shell {
 }
 
 :root[data-custom-background="active"] {
-  --panel: rgba(255, 255, 255, .12);
-  --panel-strong: rgba(255, 255, 255, .16);
-  --video-panel: rgba(255, 255, 255, .10);
-  --video-panel-strong: rgba(255, 255, 255, .14);
-  --video-line: rgba(255, 255, 255, .24);
-  --video-shadow: 0 12px 28px rgba(0, 0, 0, .16);
+  --panel: rgba(255, 255, 255, .07);
+  --panel-strong: rgba(255, 255, 255, .10);
+  --video-panel: rgba(255, 255, 255, .055);
+  --video-panel-strong: rgba(255, 255, 255, .085);
+  --video-line: rgba(255, 255, 255, .18);
+  --video-shadow: 0 10px 24px rgba(0, 0, 0, .12);
 }
 
 :root[data-theme="dark"][data-custom-background="active"] {
-  --panel: rgba(8, 13, 21, .16);
-  --panel-strong: rgba(10, 17, 27, .20);
-  --video-panel: rgba(8, 13, 21, .14);
-  --video-panel-strong: rgba(10, 17, 27, .18);
-  --video-line: rgba(255, 255, 255, .16);
-  --video-shadow: 0 12px 30px rgba(0, 0, 0, .24);
+  --panel: rgba(8, 13, 21, .10);
+  --panel-strong: rgba(10, 17, 27, .13);
+  --video-panel: rgba(8, 13, 21, .085);
+  --video-panel-strong: rgba(10, 17, 27, .115);
+  --video-line: rgba(255, 255, 255, .12);
+  --video-shadow: 0 10px 26px rgba(0, 0, 0, .20);
 }
 
 :root[data-custom-background="active"] .topbar,
@@ -2706,11 +2707,11 @@ body.has-custom-background .console-shell {
 :root[data-custom-background="active"] .compact-bars {
   border-color: var(--video-line);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .015)),
+    linear-gradient(135deg, rgba(255, 255, 255, .025), rgba(255, 255, 255, .006)),
     var(--video-panel-strong);
   box-shadow: var(--video-shadow);
-  backdrop-filter: blur(8px) saturate(1.08);
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
+  backdrop-filter: blur(4px) saturate(1.04);
+  -webkit-backdrop-filter: blur(4px) saturate(1.04);
 }
 
 :root[data-theme="dark"][data-custom-background="active"] .topbar,
@@ -2727,7 +2728,7 @@ body.has-custom-background .console-shell {
 :root[data-theme="dark"][data-custom-background="active"] .theme-state-track,
 :root[data-theme="dark"][data-custom-background="active"] .compact-bars {
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .012)),
+    linear-gradient(135deg, rgba(255, 255, 255, .02), rgba(255, 255, 255, .005)),
     var(--video-panel-strong);
 }
 
@@ -2735,7 +2736,7 @@ body.has-custom-background .console-shell {
 :root[data-custom-background="active"] .object-panel .object-sync-button,
 :root[data-custom-background="active"] .object-item.active {
   background:
-    linear-gradient(135deg, rgba(36, 200, 232, .10), rgba(98, 223, 143, .06)),
+    linear-gradient(135deg, rgba(36, 200, 232, .07), rgba(98, 223, 143, .04)),
     var(--video-panel-strong);
 }
 

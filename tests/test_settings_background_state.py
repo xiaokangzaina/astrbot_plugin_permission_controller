@@ -61,6 +61,36 @@ class SettingsBackgroundStateTest(unittest.TestCase):
         self.assertEqual(saved["media_type"], "video/mp4")
         self.assertEqual(saved["media_file"], "custom_background.mp4")
 
+    def test_video_background_progress_is_clamped_and_reset_on_new_upload(self):
+        video_bytes = b"\x00\x00\x00\x18ftypmp42" + b"\0" * 256
+        data_url = "data:video/mp4;base64," + base64.b64encode(video_bytes).decode("ascii")
+
+        saved = web._write_background_preference(
+            {
+                "data_url": data_url,
+                "file_name": "motion.mp4",
+                "currentTime": 12.3456,
+            }
+        )
+        self.assertEqual(saved["currentTime"], 0)
+
+        progressed = web._write_background_preference({"currentTime": 999999})
+        self.assertEqual(progressed["currentTime"], 86400)
+
+        lean_progress = web._write_background_preference(
+            {"currentTime": 22.5, "includeDataUrl": False}
+        )
+        self.assertEqual(lean_progress["currentTime"], 22.5)
+        self.assertNotIn("data_url", lean_progress)
+
+        replaced = web._write_background_preference(
+            {
+                "data_url": data_url,
+                "file_name": "replacement.mp4",
+            }
+        )
+        self.assertEqual(replaced["currentTime"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

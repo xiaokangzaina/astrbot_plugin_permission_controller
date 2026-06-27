@@ -845,6 +845,7 @@ function updateUi(message = "") {
   if (els.volume) els.volume.value = String(Math.round(state.volume * 100));
   if (els.bgmVisual) els.bgmVisual.classList.toggle("is-active", isPlaying || state.waitingForGesture);
   if (els.buttonVisual) els.buttonVisual.classList.toggle("is-enabled", state.buttonEnabled);
+  window.dispatchEvent(new CustomEvent("permission-console-bgm-state", { detail: getPublicState() }));
 }
 
 function isLikelyAudioFile(file) {

@@ -116,6 +116,7 @@ DEFAULT_BACKGROUND_STATE = {
     "crop_y": 50,
     "overlay": 0.42,
     "blur": 0,
+    "currentTime": 0,
     "updated_at": 0,
 }
 
@@ -378,6 +379,7 @@ def _read_background_state(include_data_url: bool = False) -> dict[str, Any]:
     state["crop_y"] = round(_clamp_number(state.get("crop_y"), 50, 0, 100), 2)
     state["overlay"] = round(_clamp_number(state.get("overlay"), 0.42, 0.18, 0.72), 2)
     state["blur"] = round(_clamp_number(state.get("blur"), 0, 0, 36), 2)
+    state["currentTime"] = round(_clamp_number(state.get("currentTime"), 0, 0, 86400), 3)
     media_file = str(state.get("media_file") or "")
     media_path = BACKGROUND_MEDIA_DIR / media_file if media_file else None
     has_media = bool(media_path and media_path.exists() and media_path.is_file())
@@ -392,7 +394,7 @@ def _read_background_state(include_data_url: bool = False) -> dict[str, Any]:
     return state
 
 
-def _write_background_state(state: dict[str, Any]) -> dict[str, Any]:
+def _write_background_state(state: dict[str, Any], include_data_url: bool = True) -> dict[str, Any]:
     BACKGROUND_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     persisted = {
         key: value
@@ -403,7 +405,7 @@ def _write_background_state(state: dict[str, Any]) -> dict[str, Any]:
         json.dumps(persisted, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    return _read_background_state(include_data_url=True)
+    return _read_background_state(include_data_url=include_data_url)
 
 
 def _remove_background_media() -> None:
@@ -456,6 +458,15 @@ def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
     state["crop_y"] = round(_clamp_number(payload.get("crop_y"), state["crop_y"], 0, 100), 2)
     state["overlay"] = round(_clamp_number(payload.get("overlay"), state["overlay"], 0.18, 0.72), 2)
     state["blur"] = round(_clamp_number(payload.get("blur"), state["blur"], 0, 36), 2)
+    state["currentTime"] = round(
+        _clamp_number(
+            payload.get("currentTime", payload.get("current_time")),
+            state.get("currentTime", 0),
+            0,
+            86400,
+        ),
+        3,
+    )
 
     data_url = payload.get("data_url")
     if data_url:
@@ -473,12 +484,14 @@ def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
                 "file_name": str(payload.get("file_name") or media_file)[:180],
                 "media_file": media_file,
                 "media_type": media_type,
+                "currentTime": 0,
             }
         )
     if not state.get("media_file"):
         state["enabled"] = False
     state["updated_at"] = int(time.time())
-    return _write_background_state(state)
+    include_data_url = payload.get("includeDataUrl", payload.get("include_data_url", True))
+    return _write_background_state(state, include_data_url=include_data_url is not False)
 
 
 def _reset_background_preference() -> dict[str, Any]:

@@ -11,6 +11,8 @@ const BACKGROUND_ENDPOINT = "settings/background";
 const BACKGROUND_RESET_ENDPOINT = "settings/background/reset";
 const BACKGROUND_MAX_BYTES = 48 * 1024 * 1024;
 const BACKGROUND_EXT_RE = /\.(gif|jpe?g|mp4|ogv|png|webm|webp)$/i;
+const BACKGROUND_PROGRESS_SAVE_INTERVAL_MS = 2000;
+const MAX_BACKGROUND_PROGRESS = 86400;
 const REASONING_LABELS = {
   "": "默认",
   low: "低",
@@ -109,6 +111,9 @@ const objectSections = {
   privates: false,
 };
 let themePreference = loadThemePreference();
+let backgroundVideo = null;
+let backgroundVideoCurrentTime = 0;
+let backgroundVideoLastSaveAt = 0;
 
 const els = {
   themeText: document.getElementById("themeText"),
@@ -240,7 +245,73 @@ function fileToDataUrl(file) {
   });
 }
 
+function clampNumber(value, min, max, fallback = min) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function getBgmEnabled() {
+  try {
+    const state = window.PermissionConsoleSound?.getState?.();
+    if (typeof state?.bgmEnabled === "boolean") return state.bgmEnabled;
+  } catch {
+    // Fall through to DOM state below.
+  }
+  const toggle = document.getElementById("backgroundMusicToggle");
+  if (toggle) return toggle.getAttribute("aria-pressed") === "true";
+  return document.body.classList.contains("sound-bgm-on");
+}
+
+function syncBackgroundVideoAudio() {
+  if (!backgroundVideo) return;
+  const bgmEnabled = getBgmEnabled();
+  backgroundVideo.muted = bgmEnabled;
+  backgroundVideo.volume = bgmEnabled ? 0 : 1;
+  backgroundVideo.classList.toggle("is-muted-by-bgm", bgmEnabled);
+}
+
+function seekBackgroundVideo(media, savedTime = backgroundVideoCurrentTime) {
+  const nextTime = clampNumber(savedTime, 0, MAX_BACKGROUND_PROGRESS, 0);
+  if (!nextTime || !Number.isFinite(media.duration) || media.duration <= 1) return;
+  try {
+    media.currentTime = nextTime >= media.duration ? nextTime % media.duration : nextTime;
+  } catch {}
+}
+
+function persistBackgroundVideoProgress({ force = false } = {}) {
+  if (!api || !backgroundVideo) return;
+  const currentTime = clampNumber(backgroundVideo.currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
+  if (!force && Math.abs(currentTime - backgroundVideoCurrentTime) < 0.75) return;
+  const now = Date.now();
+  if (!force && now - backgroundVideoLastSaveAt < BACKGROUND_PROGRESS_SAVE_INTERVAL_MS) return;
+  backgroundVideoCurrentTime = Number(currentTime.toFixed(3));
+  backgroundVideoLastSaveAt = now;
+  api.safePost(BACKGROUND_ENDPOINT, {
+    currentTime: backgroundVideoCurrentTime,
+    includeDataUrl: false,
+  }).catch(() => {});
+}
+
+async function playBackgroundVideo(media) {
+  if (!media || typeof media.play !== "function") return;
+  syncBackgroundVideoAudio();
+  try {
+    await media.play();
+  } catch {
+    if (!media.muted) {
+      media.muted = true;
+      media.volume = 0;
+      media.play().catch(() => {});
+    }
+  }
+}
+
 function resetBackgroundLayer() {
+  persistBackgroundVideoProgress({ force: true });
+  backgroundVideo = null;
+  backgroundVideoCurrentTime = 0;
+  backgroundVideoLastSaveAt = 0;
   root.removeAttribute("data-custom-background");
   document.body.classList.remove("has-custom-background");
   if (els.backgroundLayer) els.backgroundLayer.replaceChildren();
@@ -249,25 +320,39 @@ function resetBackgroundLayer() {
   if (els.backgroundCard) els.backgroundCard.classList.remove("is-active");
 }
 
-function renderBackgroundMedia(dataUrl, mediaType) {
+function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0) {
   if (!els.backgroundLayer) return;
+  persistBackgroundVideoProgress({ force: true });
   const kind = backgroundKind(mediaType);
   const media = document.createElement(kind === "video" ? "video" : "img");
   media.className = "custom-background-media";
   if (kind === "video") {
+    backgroundVideo = media;
+    backgroundVideoCurrentTime = clampNumber(currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
     media.autoplay = true;
     media.loop = true;
-    media.muted = true;
+    media.muted = getBgmEnabled();
     media.playsInline = true;
-    media.preload = "metadata";
+    media.preload = "auto";
     media.setAttribute("aria-hidden", "true");
+    media.addEventListener("loadedmetadata", () => {
+      seekBackgroundVideo(media);
+      syncBackgroundVideoAudio();
+      playBackgroundVideo(media);
+    }, { once: true });
+    media.addEventListener("timeupdate", () => persistBackgroundVideoProgress());
+    media.addEventListener("pause", () => persistBackgroundVideoProgress({ force: true }));
+    media.addEventListener("ended", () => persistBackgroundVideoProgress({ force: true }));
   } else {
+    backgroundVideo = null;
+    backgroundVideoCurrentTime = 0;
+    backgroundVideoLastSaveAt = 0;
     media.alt = "";
     media.decoding = "async";
   }
   media.src = dataUrl;
   els.backgroundLayer.replaceChildren(media);
-  if (kind === "video") media.play?.().catch(() => {});
+  if (kind === "video") playBackgroundVideo(media);
 }
 
 function applyBackgroundState(background = {}) {
@@ -279,7 +364,7 @@ function applyBackgroundState(background = {}) {
   const mediaType = String(background.media_type || "image/png");
   root.setAttribute("data-custom-background", "active");
   document.body.classList.add("has-custom-background");
-  renderBackgroundMedia(background.data_url, mediaType);
+  renderBackgroundMedia(background.data_url, mediaType, background.currentTime);
   if (els.backgroundName) {
     els.backgroundName.textContent = String(background.file_name || "自定义背景");
   }
@@ -318,6 +403,7 @@ async function uploadBackground(file) {
     file_name: file.name || "自定义背景",
     overlay: 0.5,
     blur: 0,
+    currentTime: 0,
   });
   applyBackgroundState(saved);
   toast("自定义背景已保存");
@@ -1123,6 +1209,17 @@ function bindEvents() {
   els.resetBackgroundBtn?.addEventListener("click", () => {
     resetBackground().catch((err) => toast(err.message || "恢复背景失败", "error"));
   });
+  window.addEventListener("permission-console-bgm-state", syncBackgroundVideoAudio);
+  document.addEventListener("click", () => {
+    syncBackgroundVideoAudio();
+    if (backgroundVideo) playBackgroundVideo(backgroundVideo);
+  });
+  document.addEventListener("keydown", () => {
+    syncBackgroundVideoAudio();
+    if (backgroundVideo) playBackgroundVideo(backgroundVideo);
+  });
+  window.addEventListener("pagehide", () => persistBackgroundVideoProgress({ force: true }));
+  window.addEventListener("beforeunload", () => persistBackgroundVideoProgress({ force: true }));
   if (mediaQuery) {
     const handler = () => {
       if (themePreference === "auto") applyTheme();
