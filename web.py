@@ -121,6 +121,7 @@ DEFAULT_AUDIO_STATE = {
     "source": "default",
     "trackName": "",
     "volume": 0.76,
+    "currentTime": 0,
     "updated_at": 0,
 }
 
@@ -202,6 +203,7 @@ def _normalize_audio_state(payload: dict[str, Any] | None = None) -> dict[str, A
         "source": audio_source,
         "trackName": str(source.get("trackName") or "")[:180],
         "volume": round(_clamp_number(source.get("volume"), DEFAULT_AUDIO_STATE["volume"], 0, 1), 3),
+        "currentTime": round(_clamp_number(source.get("currentTime"), 0, 0, 86400), 3),
         "updated_at": int(source.get("updated_at") or 0),
     }
 

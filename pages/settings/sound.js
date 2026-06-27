@@ -12,6 +12,8 @@ const AUDIO_STATE_ENDPOINT = "settings/audio/state";
 const CUSTOM_AUDIO_ENDPOINT = "settings/audio/custom";
 const CUSTOM_AUDIO_RESET_ENDPOINT = "settings/audio/custom/reset";
 const AUDIO_CACHE_VERSION = "permission_console_audio_20260627_v330";
+const PROGRESS_SAVE_INTERVAL_MS = 2000;
+const MAX_SAVED_PROGRESS = 86400;
 const DEFAULT_TRACK_CANDIDATES = buildDefaultTrackCandidates();
 const DEFAULT_TRACK_SRC = DEFAULT_TRACK_CANDIDATES[0] || DEFAULT_TRACK_PATH;
 const DEFAULT_TRACK_NAME = "小k橘子 - 劫后余生.mp3";
@@ -22,6 +24,7 @@ const defaultState = {
   source: "default",
   trackName: DEFAULT_TRACK_NAME,
   volume: 0.76,
+  currentTime: 0,
 };
 
 const state = {
@@ -35,6 +38,7 @@ const state = {
   lastPlayError: "",
   audioContext: null,
   defaultTrackIndex: 0,
+  lastProgressSaveAt: 0,
   elements: {},
 };
 
@@ -290,6 +294,7 @@ function loadState() {
     state.source = payload.source === "custom" ? "custom" : "default";
     state.trackName = String(payload.trackName || DEFAULT_TRACK_NAME);
     state.volume = clamp(payload.volume ?? defaultState.volume, 0, 1);
+    state.currentTime = clamp(payload.currentTime ?? defaultState.currentTime, 0, MAX_SAVED_PROGRESS);
   } else {
     const legacySwitch = readLegacyBgmSwitch();
     if (legacySwitch !== null) state.bgmEnabled = legacySwitch;
@@ -311,6 +316,7 @@ function persistState() {
     source: state.source,
     trackName: state.trackName,
     volume: state.volume,
+    currentTime: state.currentTime,
   });
   try {
     window.localStorage.setItem(SOUND_STATE_KEY, payload);
@@ -327,6 +333,7 @@ function audioStatePayload() {
     source: state.source,
     trackName: state.trackName || DEFAULT_TRACK_NAME,
     volume: state.volume,
+    currentTime: state.currentTime,
   };
 }
 
@@ -336,6 +343,7 @@ function hasLocalAudioPreference() {
     state.buttonEnabled !== defaultState.buttonEnabled ||
     state.source !== defaultState.source ||
     state.volume !== defaultState.volume ||
+    state.currentTime !== defaultState.currentTime ||
     Boolean(state.trackName && state.trackName !== DEFAULT_TRACK_NAME)
   );
 }
@@ -347,6 +355,7 @@ function applyAudioStatePayload(payload) {
   state.source = payload.source === "custom" ? "custom" : "default";
   state.trackName = String(payload.trackName || DEFAULT_TRACK_NAME);
   state.volume = clamp(payload.volume ?? defaultState.volume, 0, 1);
+  state.currentTime = clamp(payload.currentTime ?? defaultState.currentTime, 0, MAX_SAVED_PROGRESS);
 }
 
 async function persistStateToBackend() {
@@ -507,6 +516,7 @@ async function resolveTrackSrc() {
   if (!blob) {
     state.source = "default";
     state.trackName = DEFAULT_TRACK_NAME;
+    state.currentTime = 0;
     state.assetError = false;
     state.defaultTrackIndex = 0;
     persistState();
@@ -516,6 +526,51 @@ async function resolveTrackSrc() {
   revokeCustomUrl();
   state.customUrl = URL.createObjectURL(blob);
   return state.customUrl;
+}
+
+function normalizeProgress(value) {
+  return clamp(value, 0, MAX_SAVED_PROGRESS);
+}
+
+function seekableProgress(audio, savedTime = state.currentTime) {
+  let next = normalizeProgress(savedTime);
+  const duration = Number(audio?.duration);
+  if (Number.isFinite(duration) && duration > 0) {
+    next %= duration;
+    if (duration - next < 0.35) next = 0;
+  }
+  return next;
+}
+
+function applySavedProgress(audio) {
+  if (!audio || audio.dataset.progressApplied === "true") return;
+  const next = seekableProgress(audio);
+  audio.dataset.progressApplied = "true";
+  if (next <= 0) return;
+  try {
+    audio.currentTime = next;
+    state.currentTime = next;
+  } catch {
+    audio.dataset.progressApplied = "false";
+  }
+}
+
+function updateProgressFromAudio(audio = state.audio) {
+  if (!audio) return false;
+  const value = Number(audio.currentTime);
+  if (!Number.isFinite(value) || value < 0) return false;
+  state.currentTime = seekableProgress(audio, value);
+  return true;
+}
+
+function persistProgress({ force = false, backend = true } = {}) {
+  if (!updateProgressFromAudio()) return;
+  persistState();
+  const now = Date.now();
+  if (!backend) return;
+  if (!force && now - state.lastProgressSaveAt < PROGRESS_SAVE_INTERVAL_MS) return;
+  state.lastProgressSaveAt = now;
+  persistStateToBackend().catch(() => {});
 }
 
 function createAudio(src) {
@@ -528,16 +583,25 @@ function createAudio(src) {
   audio.setAttribute("aria-hidden", "true");
   audio.setAttribute("data-permission-console-audio", "background");
   document.body.appendChild(audio);
+  audio.addEventListener("loadedmetadata", () => {
+    applySavedProgress(audio);
+  });
   audio.addEventListener("canplay", () => {
+    applySavedProgress(audio);
     state.assetError = false;
     updateUi();
   });
   audio.addEventListener("playing", () => {
+    applySavedProgress(audio);
     state.waitingForGesture = false;
     state.assetError = false;
     updateUi();
   });
-  audio.addEventListener("pause", () => updateUi());
+  audio.addEventListener("timeupdate", () => persistProgress());
+  audio.addEventListener("pause", () => {
+    persistProgress({ force: true });
+    updateUi();
+  });
   audio.addEventListener("error", () => {
     if (state.source === "custom") {
       state.waitingForGesture = false;
@@ -571,6 +635,7 @@ async function ensureAudio() {
   const src = await resolveTrackSrc();
   if (state.audio && state.audio.dataset.src === src) return state.audio;
   if (state.audio) {
+    persistProgress({ force: true });
     state.audio.pause();
     state.audio.remove();
   }
@@ -589,6 +654,7 @@ async function playBgm() {
   if (!state.bgmEnabled || state.assetError) return;
   const audio = getReusableAudio() || await ensureAudio();
   audio.volume = state.volume;
+  applySavedProgress(audio);
   if (typeof audio.play !== "function") {
     state.waitingForGesture = true;
     state.lastPlayError = "当前环境不支持音频播放";
@@ -612,11 +678,13 @@ async function playBgm() {
 
 function stopBgm() {
   if (state.audio) {
+    persistProgress({ force: true });
     state.audio.pause();
-    state.audio.currentTime = 0;
   }
   state.waitingForGesture = false;
   state.lastPlayError = "";
+  persistState();
+  persistStateToBackend().catch(() => {});
   updateUi();
 }
 
@@ -798,6 +866,7 @@ async function handleUpload(file) {
   const saved = await saveCustomAudioFile(file);
   state.source = "custom";
   state.trackName = saved.fileName || file.name || "自定义背景音";
+  state.currentTime = 0;
   state.assetError = false;
   persistState();
   await persistStateToBackend();
@@ -816,6 +885,7 @@ async function resetTrack() {
   revokeCustomUrl();
   state.source = "default";
   state.trackName = DEFAULT_TRACK_NAME;
+  state.currentTime = 0;
   state.assetError = false;
   state.defaultTrackIndex = 0;
   if (state.audio) {
@@ -847,6 +917,7 @@ function unlockFromGesture() {
   const audio = getReusableAudio();
   if (audio) {
     audio.volume = state.volume;
+    applySavedProgress(audio);
     if (typeof audio.play !== "function") {
       state.lastPlayError = "当前环境不支持音频播放";
       updateUi();
@@ -877,8 +948,11 @@ function bindLifecycle() {
   window.addEventListener("pointerup", unlockFromGesture, { capture: true });
   window.addEventListener("click", unlockFromGesture, { capture: true });
   window.addEventListener("keydown", unlockFromGesture, { capture: true });
+  window.addEventListener("pagehide", () => persistProgress({ force: true }));
+  window.addEventListener("beforeunload", () => persistProgress({ force: true }));
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      persistProgress({ force: true });
       if (state.audio && !state.audio.paused) state.audio.pause();
       return;
     }
@@ -925,11 +999,13 @@ async function restoreCustomNameIfNeeded() {
     if (!blob) {
       state.source = "default";
       state.trackName = DEFAULT_TRACK_NAME;
+      state.currentTime = 0;
       persistState();
     }
   } catch {
     state.source = "default";
     state.trackName = DEFAULT_TRACK_NAME;
+    state.currentTime = 0;
     persistState();
   }
 }
@@ -947,6 +1023,8 @@ function getPublicState() {
     audioSrc: audio?.currentSrc || audio?.src || defaultTrackSrc(),
     audioPaused: audio ? audio.paused : true,
     audioReadyState: audio ? audio.readyState : 0,
+    currentTime: state.currentTime,
+    audioCurrentTime: audio ? audio.currentTime : 0,
     defaultTrackIndex: state.defaultTrackIndex,
   };
 }

@@ -30,6 +30,7 @@ class SettingsAudioStateTest(unittest.TestCase):
                 "source": "default",
                 "trackName": "track.mp3",
                 "volume": 0.42,
+                "currentTime": 18.75,
             }
         )
 
@@ -43,6 +44,7 @@ class SettingsAudioStateTest(unittest.TestCase):
         self.assertFalse(loaded["buttonEnabled"])
         self.assertEqual(loaded["trackName"], "track.mp3")
         self.assertEqual(loaded["volume"], 0.42)
+        self.assertEqual(loaded["currentTime"], 18.75)
 
     def test_audio_state_normalizes_invalid_values(self):
         saved = web._write_audio_state(
@@ -51,6 +53,7 @@ class SettingsAudioStateTest(unittest.TestCase):
                 "buttonEnabled": "yes",
                 "source": "remote",
                 "volume": 8,
+                "currentTime": -3,
             }
         )
 
@@ -58,6 +61,20 @@ class SettingsAudioStateTest(unittest.TestCase):
         self.assertTrue(saved["buttonEnabled"])
         self.assertEqual(saved["source"], "default")
         self.assertEqual(saved["volume"], 1)
+        self.assertEqual(saved["currentTime"], 0)
+
+    def test_audio_state_clamps_current_time_to_track_window(self):
+        saved = web._write_audio_state(
+            {
+                "bgmEnabled": True,
+                "buttonEnabled": True,
+                "source": "default",
+                "volume": 0.5,
+                "currentTime": 999999,
+            }
+        )
+
+        self.assertEqual(saved["currentTime"], 86400)
 
     def test_custom_audio_round_trips_through_backend_storage(self):
         audio_bytes = b"ID3" + b"\0" * 2048
