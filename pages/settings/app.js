@@ -13,6 +13,7 @@ const BACKGROUND_MAX_BYTES = 48 * 1024 * 1024;
 const BACKGROUND_EXT_RE = /\.(gif|jpe?g|mp4|ogv|png|webm|webp)$/i;
 const BACKGROUND_PROGRESS_SAVE_INTERVAL_MS = 2000;
 const MAX_BACKGROUND_PROGRESS = 86400;
+const BACKGROUND_PROGRESS_KEY = "permission-console-background-progress-v1";
 const REASONING_LABELS = {
   "": "默认",
   low: "低",
@@ -112,8 +113,10 @@ const objectSections = {
 };
 let themePreference = loadThemePreference();
 let backgroundVideo = null;
+let backgroundVideoFill = null;
 let backgroundVideoCurrentTime = 0;
 let backgroundVideoLastSaveAt = 0;
+let backgroundProgressId = "";
 
 const els = {
   themeText: document.getElementById("themeText"),
@@ -251,6 +254,43 @@ function clampNumber(value, min, max, fallback = min) {
   return Math.max(min, Math.min(max, number));
 }
 
+function backgroundProgressIdentity(background = {}) {
+  return [
+    String(background.media_type || ""),
+    String(background.media_file || ""),
+    String(background.file_name || ""),
+    String(background.updated_at || ""),
+  ].join("|");
+}
+
+function readLocalBackgroundProgress(id) {
+  if (!id) return 0;
+  try {
+    const payload = JSON.parse(window.localStorage.getItem(BACKGROUND_PROGRESS_KEY) || "{}");
+    return clampNumber(payload?.[id], 0, MAX_BACKGROUND_PROGRESS, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function writeLocalBackgroundProgress(id, value) {
+  if (!id) return;
+  try {
+    const payload = JSON.parse(window.localStorage.getItem(BACKGROUND_PROGRESS_KEY) || "{}");
+    payload[id] = clampNumber(value, 0, MAX_BACKGROUND_PROGRESS, 0);
+    window.localStorage.setItem(BACKGROUND_PROGRESS_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function clearLocalBackgroundProgress(id) {
+  if (!id) return;
+  try {
+    const payload = JSON.parse(window.localStorage.getItem(BACKGROUND_PROGRESS_KEY) || "{}");
+    delete payload[id];
+    window.localStorage.setItem(BACKGROUND_PROGRESS_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
 function getBgmEnabled() {
   try {
     const state = window.PermissionConsoleSound?.getState?.();
@@ -269,6 +309,10 @@ function syncBackgroundVideoAudio() {
   backgroundVideo.muted = bgmEnabled;
   backgroundVideo.volume = bgmEnabled ? 0 : 1;
   backgroundVideo.classList.toggle("is-muted-by-bgm", bgmEnabled);
+  if (backgroundVideoFill) {
+    backgroundVideoFill.muted = true;
+    backgroundVideoFill.volume = 0;
+  }
 }
 
 function seekBackgroundVideo(media, savedTime = backgroundVideoCurrentTime) {
@@ -279,14 +323,25 @@ function seekBackgroundVideo(media, savedTime = backgroundVideoCurrentTime) {
   } catch {}
 }
 
+function syncBackgroundFillProgress() {
+  if (!backgroundVideo || !backgroundVideoFill) return;
+  try {
+    if (Math.abs(backgroundVideoFill.currentTime - backgroundVideo.currentTime) > 0.35) {
+      backgroundVideoFill.currentTime = backgroundVideo.currentTime;
+    }
+  } catch {}
+}
+
 function persistBackgroundVideoProgress({ force = false } = {}) {
-  if (!api || !backgroundVideo) return;
+  if (!backgroundVideo) return;
   const currentTime = clampNumber(backgroundVideo.currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
   if (!force && Math.abs(currentTime - backgroundVideoCurrentTime) < 0.75) return;
   const now = Date.now();
   if (!force && now - backgroundVideoLastSaveAt < BACKGROUND_PROGRESS_SAVE_INTERVAL_MS) return;
   backgroundVideoCurrentTime = Number(currentTime.toFixed(3));
   backgroundVideoLastSaveAt = now;
+  writeLocalBackgroundProgress(backgroundProgressId, backgroundVideoCurrentTime);
+  if (!api) return;
   api.safePost(BACKGROUND_ENDPOINT, {
     currentTime: backgroundVideoCurrentTime,
     includeDataUrl: false,
@@ -296,6 +351,7 @@ function persistBackgroundVideoProgress({ force = false } = {}) {
 async function playBackgroundVideo(media) {
   if (!media || typeof media.play !== "function") return;
   syncBackgroundVideoAudio();
+  if (backgroundVideoFill?.play) backgroundVideoFill.play().catch(() => {});
   try {
     await media.play();
   } catch {
@@ -310,8 +366,10 @@ async function playBackgroundVideo(media) {
 function resetBackgroundLayer() {
   persistBackgroundVideoProgress({ force: true });
   backgroundVideo = null;
+  backgroundVideoFill = null;
   backgroundVideoCurrentTime = 0;
   backgroundVideoLastSaveAt = 0;
+  backgroundProgressId = "";
   root.removeAttribute("data-custom-background");
   document.body.classList.remove("has-custom-background");
   if (els.backgroundLayer) els.backgroundLayer.replaceChildren();
@@ -320,38 +378,65 @@ function resetBackgroundLayer() {
   if (els.backgroundCard) els.backgroundCard.classList.remove("is-active");
 }
 
-function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0) {
-  if (!els.backgroundLayer) return;
-  persistBackgroundVideoProgress({ force: true });
-  const kind = backgroundKind(mediaType);
+function createBackgroundMediaElement(kind, className) {
   const media = document.createElement(kind === "video" ? "video" : "img");
-  media.className = "custom-background-media";
+  media.className = className;
   if (kind === "video") {
-    backgroundVideo = media;
-    backgroundVideoCurrentTime = clampNumber(currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
     media.autoplay = true;
     media.loop = true;
-    media.muted = getBgmEnabled();
     media.playsInline = true;
     media.preload = "auto";
     media.setAttribute("aria-hidden", "true");
+  } else {
+    media.alt = "";
+    media.decoding = "async";
+    media.setAttribute("aria-hidden", "true");
+  }
+  return media;
+}
+
+function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0, progressId = "") {
+  if (!els.backgroundLayer) return;
+  persistBackgroundVideoProgress({ force: true });
+  const kind = backgroundKind(mediaType);
+  const stage = document.createElement("div");
+  const fill = createBackgroundMediaElement(kind, "custom-background-fill");
+  const media = createBackgroundMediaElement(kind, "custom-background-media");
+  stage.className = "custom-background-stage";
+  fill.src = dataUrl;
+  media.src = dataUrl;
+  stage.append(fill, media);
+  if (kind === "video") {
+    backgroundVideo = media;
+    backgroundVideoFill = fill;
+    backgroundProgressId = progressId;
+    backgroundVideoCurrentTime =
+      readLocalBackgroundProgress(progressId) ||
+      clampNumber(currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
+    fill.muted = true;
+    fill.volume = 0;
+    media.muted = getBgmEnabled();
     media.addEventListener("loadedmetadata", () => {
       seekBackgroundVideo(media);
+      seekBackgroundVideo(fill);
       syncBackgroundVideoAudio();
       playBackgroundVideo(media);
     }, { once: true });
-    media.addEventListener("timeupdate", () => persistBackgroundVideoProgress());
+    fill.addEventListener("loadedmetadata", () => seekBackgroundVideo(fill), { once: true });
+    media.addEventListener("timeupdate", () => {
+      syncBackgroundFillProgress();
+      persistBackgroundVideoProgress();
+    });
     media.addEventListener("pause", () => persistBackgroundVideoProgress({ force: true }));
     media.addEventListener("ended", () => persistBackgroundVideoProgress({ force: true }));
   } else {
     backgroundVideo = null;
+    backgroundVideoFill = null;
     backgroundVideoCurrentTime = 0;
     backgroundVideoLastSaveAt = 0;
-    media.alt = "";
-    media.decoding = "async";
+    backgroundProgressId = "";
   }
-  media.src = dataUrl;
-  els.backgroundLayer.replaceChildren(media);
+  els.backgroundLayer.replaceChildren(stage);
   if (kind === "video") playBackgroundVideo(media);
 }
 
@@ -362,9 +447,10 @@ function applyBackgroundState(background = {}) {
     return;
   }
   const mediaType = String(background.media_type || "image/png");
+  const progressId = backgroundProgressIdentity(background);
   root.setAttribute("data-custom-background", "active");
   document.body.classList.add("has-custom-background");
-  renderBackgroundMedia(background.data_url, mediaType, background.currentTime);
+  renderBackgroundMedia(background.data_url, mediaType, background.currentTime, progressId);
   if (els.backgroundName) {
     els.backgroundName.textContent = String(background.file_name || "自定义背景");
   }
@@ -405,6 +491,7 @@ async function uploadBackground(file) {
     blur: 0,
     currentTime: 0,
   });
+  clearLocalBackgroundProgress(backgroundProgressIdentity(saved));
   applyBackgroundState(saved);
   toast("自定义背景已保存");
 }
