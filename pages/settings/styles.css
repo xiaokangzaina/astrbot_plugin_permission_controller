@@ -2601,6 +2601,178 @@ body.sound-bgm-on .compact-bars i:nth-child(4),
   }
 }
 
+.custom-background-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #05070b;
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+
+.custom-background-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 8, 13, .28), rgba(5, 8, 13, .42)),
+    radial-gradient(70% 60% at 12% 0%, rgba(36, 200, 232, .16), transparent 58%),
+    radial-gradient(80% 70% at 92% 8%, rgba(255, 106, 168, .14), transparent 56%);
+}
+
+.custom-background-media {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  filter: saturate(1.08) contrast(1.02) brightness(.86);
+}
+
+body.has-custom-background {
+  background: #05070b;
+}
+
+body.has-custom-background .custom-background-layer {
+  opacity: 1;
+}
+
+body.has-custom-background .console-shell {
+  position: relative;
+  z-index: 1;
+  background:
+    linear-gradient(120deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .03)),
+    transparent;
+}
+
+.background-card {
+  padding: 12px;
+}
+
+.background-card.is-active .background-preview-icon {
+  color: var(--mint);
+}
+
+.background-preview-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--video-line);
+  border-radius: 8px;
+  color: var(--cyan);
+  background: rgba(255, 255, 255, .42);
+}
+
+:root[data-theme="dark"] .background-preview-icon {
+  background: rgba(255, 255, 255, .06);
+}
+
+.background-preview-icon i {
+  width: 25px;
+  height: 25px;
+  display: block;
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, currentColor 0 46%, transparent 46%),
+    radial-gradient(circle at 72% 30%, currentColor 0 14%, transparent 15%),
+    linear-gradient(135deg, rgba(255, 106, 168, .86), rgba(36, 200, 232, .86), rgba(98, 223, 143, .86));
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .56);
+}
+
+.background-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.background-actions .ghost-button {
+  min-width: 0;
+  min-height: 40px;
+  justify-content: center;
+  padding-inline: 10px;
+}
+
+:root[data-custom-background="active"] {
+  --panel: rgba(255, 255, 255, .30);
+  --panel-strong: rgba(255, 255, 255, .38);
+  --video-panel: rgba(255, 255, 255, .28);
+  --video-panel-strong: rgba(255, 255, 255, .36);
+  --video-line: rgba(255, 255, 255, .30);
+  --video-shadow: 0 16px 38px rgba(0, 0, 0, .20);
+}
+
+:root[data-theme="dark"][data-custom-background="active"] {
+  --panel: rgba(8, 13, 21, .38);
+  --panel-strong: rgba(10, 17, 27, .46);
+  --video-panel: rgba(8, 13, 21, .34);
+  --video-panel-strong: rgba(10, 17, 27, .44);
+  --video-line: rgba(255, 255, 255, .20);
+  --video-shadow: 0 18px 42px rgba(0, 0, 0, .34);
+}
+
+:root[data-custom-background="active"] .topbar,
+:root[data-custom-background="active"] .panel,
+:root[data-custom-background="active"] .insight-panel,
+:root[data-custom-background="active"] .metric-card,
+:root[data-custom-background="active"] .form-card,
+:root[data-custom-background="active"] .toggle-card,
+:root[data-custom-background="active"] .object-item,
+:root[data-custom-background="active"] .search-box,
+:root[data-custom-background="active"] .segment-control,
+:root[data-custom-background="active"] .form-stage,
+:root[data-custom-background="active"] .sound-state div,
+:root[data-custom-background="active"] .theme-state-track,
+:root[data-custom-background="active"] .compact-bars,
+:root[data-custom-background="active"] .background-preview-icon {
+  border-color: var(--video-line);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .06)),
+    var(--video-panel-strong);
+  box-shadow: var(--video-shadow);
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+}
+
+:root[data-theme="dark"][data-custom-background="active"] .topbar,
+:root[data-theme="dark"][data-custom-background="active"] .panel,
+:root[data-theme="dark"][data-custom-background="active"] .insight-panel,
+:root[data-theme="dark"][data-custom-background="active"] .metric-card,
+:root[data-theme="dark"][data-custom-background="active"] .form-card,
+:root[data-theme="dark"][data-custom-background="active"] .toggle-card,
+:root[data-theme="dark"][data-custom-background="active"] .object-item,
+:root[data-theme="dark"][data-custom-background="active"] .search-box,
+:root[data-theme="dark"][data-custom-background="active"] .segment-control,
+:root[data-theme="dark"][data-custom-background="active"] .form-stage,
+:root[data-theme="dark"][data-custom-background="active"] .sound-state div,
+:root[data-theme="dark"][data-custom-background="active"] .theme-state-track,
+:root[data-theme="dark"][data-custom-background="active"] .compact-bars,
+:root[data-theme="dark"][data-custom-background="active"] .background-preview-icon {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .025)),
+    var(--video-panel-strong);
+}
+
+:root[data-custom-background="active"] .insight-panel .panel,
+:root[data-custom-background="active"] .object-panel .object-sync-button,
+:root[data-custom-background="active"] .object-item.active {
+  background:
+    linear-gradient(135deg, rgba(36, 200, 232, .16), rgba(98, 223, 143, .10)),
+    var(--video-panel-strong);
+}
+
+:root[data-custom-background="active"] .console-shell,
+:root[data-custom-background="active"] .topbar,
+:root[data-custom-background="active"] .panel,
+:root[data-custom-background="active"] .object-item,
+:root[data-custom-background="active"] .runtime-info-card,
+:root[data-custom-background="active"] .sound-state div {
+  text-shadow: 0 1px 12px rgba(0, 0, 0, .16);
+}
+
 .object-panel #refreshGroupsBtn.object-sync-button {
   width: 100%;
   min-width: 0;

@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AstrBot 权限控制台</title>
   <link rel="icon" href="./assets/brand-avatar.png" />
-  <link rel="stylesheet" href="./styles.css?v=permission_console_audio_progress_20260627_v337" />
+  <link rel="stylesheet" href="./styles.css?v=permission_console_background_upload_20260627_v338" />
 </head>
 <body>
+  <div class="custom-background-layer" id="customBackgroundLayer" aria-hidden="true"></div>
   <main class="console-shell">
     <header class="topbar">
       <section class="brand-card" aria-label="权限控制台">
@@ -140,6 +141,26 @@
           </div>
         </section>
 
+        <section class="panel background-card" id="backgroundCard">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Visual Layer</p>
+              <h2>视觉背景</h2>
+              <p class="track-subtitle" id="backgroundNameLabel">默认炫彩背景</p>
+            </div>
+            <span class="background-preview-icon" aria-hidden="true"><i></i></span>
+          </div>
+          <dl class="sound-state background-state">
+            <div><dt>媒体类型</dt><dd id="backgroundStatusText">未启用自定义背景</dd></div>
+            <div><dt>卡片材质</dt><dd>启用后高透明</dd></div>
+          </dl>
+          <input class="visually-hidden" id="backgroundUploadInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg" />
+          <div class="sound-actions background-actions">
+            <button class="ghost-button" id="uploadBackgroundBtn" type="button">上传背景</button>
+            <button class="ghost-button" id="resetBackgroundBtn" type="button">恢复默认</button>
+          </div>
+        </section>
+
         <section class="panel runtime-info-card">
           <span>当前日期</span>
           <strong id="currentDateLabel">加载中</strong>
@@ -171,7 +192,7 @@
   </main>
 
   <div class="toast-layer" id="toastLayer"></div>
-  <script type="module" src="./sound.js?v=permission_console_audio_progress_20260627_v337"></script>
-  <script type="module" src="./app.js?v=permission_console_audio_progress_20260627_v337"></script>
+  <script type="module" src="./sound.js?v=permission_console_background_upload_20260627_v338"></script>
+  <script type="module" src="./app.js?v=permission_console_background_upload_20260627_v338"></script>
 </body>
 </html>

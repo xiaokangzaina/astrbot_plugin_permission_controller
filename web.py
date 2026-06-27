@@ -67,8 +67,21 @@ VALID_BACKGROUND_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+    "video/mp4": ".mp4",
+    "video/ogg": ".ogv",
+    "video/webm": ".webm",
 }
-MAX_BACKGROUND_BYTES = 12 * 1024 * 1024
+VALID_BACKGROUND_EXTENSIONS = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".mp4": "video/mp4",
+    ".ogv": "video/ogg",
+    ".png": "image/png",
+    ".webm": "video/webm",
+    ".webp": "image/webp",
+}
+MAX_BACKGROUND_BYTES = 48 * 1024 * 1024
 VALID_AUDIO_MIME_TYPES = {
     "audio/aac": ".aac",
     "audio/flac": ".flac",
@@ -404,14 +417,27 @@ def _remove_background_media() -> None:
                 pass
 
 
-def _decode_background_data_url(data_url: Any) -> tuple[str, bytes]:
+def _background_mime_and_extension(file_name: Any, mime_type: Any) -> tuple[str, str]:
+    name = str(file_name or "").strip()
+    suffix = Path(name).suffix.lower()
+    mime = str(mime_type or "").strip().lower()
+    if mime in VALID_BACKGROUND_MIME_TYPES:
+        return mime, VALID_BACKGROUND_MIME_TYPES[mime]
+    if suffix in VALID_BACKGROUND_EXTENSIONS:
+        inferred_mime = VALID_BACKGROUND_EXTENSIONS[suffix]
+        return inferred_mime, VALID_BACKGROUND_MIME_TYPES[inferred_mime]
+    raise ValueError("background must be PNG, JPG, WebP, GIF, MP4, WebM, or OGV")
+
+
+def _decode_background_data_url(data_url: Any, file_name: Any = "") -> tuple[str, str, bytes]:
     text = str(data_url or "")
     header, separator, encoded = text.partition(",")
     if separator != "," or not header.startswith("data:") or ";base64" not in header:
         raise ValueError("background must be a base64 data URL")
-    media_type = header[5:].split(";", 1)[0].strip().lower()
-    if media_type not in VALID_BACKGROUND_MIME_TYPES:
-        raise ValueError("background must be GIF, PNG, JPG, or WebP")
+    media_type, extension = _background_mime_and_extension(
+        file_name,
+        header[5:].split(";", 1)[0].strip().lower(),
+    )
     try:
         content = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -419,8 +445,8 @@ def _decode_background_data_url(data_url: Any) -> tuple[str, bytes]:
     if not content:
         raise ValueError("background file is empty")
     if len(content) > MAX_BACKGROUND_BYTES:
-        raise ValueError("background file must be 12 MB or smaller")
-    return media_type, content
+        raise ValueError("background file must be 48 MB or smaller")
+    return media_type, extension, content
 
 
 def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
@@ -433,10 +459,13 @@ def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
 
     data_url = payload.get("data_url")
     if data_url:
-        media_type, content = _decode_background_data_url(data_url)
+        media_type, extension, content = _decode_background_data_url(
+            data_url,
+            payload.get("file_name") or payload.get("fileName"),
+        )
         BACKGROUND_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         _remove_background_media()
-        media_file = f"custom_background{VALID_BACKGROUND_MIME_TYPES[media_type]}"
+        media_file = f"custom_background{extension}"
         (BACKGROUND_MEDIA_DIR / media_file).write_bytes(content)
         state.update(
             {

@@ -7,6 +7,10 @@ const mediaQuery = typeof window.matchMedia === "function"
   : null;
 
 const THEME_KEY = "permission-console-theme";
+const BACKGROUND_ENDPOINT = "settings/background";
+const BACKGROUND_RESET_ENDPOINT = "settings/background/reset";
+const BACKGROUND_MAX_BYTES = 48 * 1024 * 1024;
+const BACKGROUND_EXT_RE = /\.(gif|jpe?g|mp4|ogv|png|webm|webp)$/i;
 const REASONING_LABELS = {
   "": "默认",
   low: "低",
@@ -136,6 +140,13 @@ const els = {
   form: document.getElementById("groupForm"),
   summary: document.getElementById("selectedSummary"),
   toastLayer: document.getElementById("toastLayer"),
+  backgroundLayer: document.getElementById("customBackgroundLayer"),
+  backgroundCard: document.getElementById("backgroundCard"),
+  backgroundInput: document.getElementById("backgroundUploadInput"),
+  uploadBackgroundBtn: document.getElementById("uploadBackgroundBtn"),
+  resetBackgroundBtn: document.getElementById("resetBackgroundBtn"),
+  backgroundName: document.getElementById("backgroundNameLabel"),
+  backgroundStatus: document.getElementById("backgroundStatusText"),
 };
 
 function escapeHtml(value) {
@@ -200,6 +211,126 @@ function cycleTheme() {
   themePreference = themePreference === "auto" ? "light" : themePreference === "light" ? "dark" : "auto";
   applyTheme();
   saveThemePreference();
+}
+
+function backgroundKind(mediaType = "") {
+  return String(mediaType).startsWith("video/") ? "video" : "image";
+}
+
+function backgroundLabel(mediaType = "") {
+  const kind = backgroundKind(mediaType);
+  if (kind === "video") return "视频背景";
+  if (mediaType === "image/gif") return "动态图片";
+  return "静态图片";
+}
+
+function isLikelyBackgroundFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "");
+  if (type.startsWith("image/") || type.startsWith("video/")) return true;
+  return BACKGROUND_EXT_RE.test(String(file.name || ""));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取背景文件失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resetBackgroundLayer() {
+  root.removeAttribute("data-custom-background");
+  document.body.classList.remove("has-custom-background");
+  if (els.backgroundLayer) els.backgroundLayer.replaceChildren();
+  if (els.backgroundName) els.backgroundName.textContent = "默认炫彩背景";
+  if (els.backgroundStatus) els.backgroundStatus.textContent = "未启用自定义背景";
+  if (els.backgroundCard) els.backgroundCard.classList.remove("is-active");
+}
+
+function renderBackgroundMedia(dataUrl, mediaType) {
+  if (!els.backgroundLayer) return;
+  const kind = backgroundKind(mediaType);
+  const media = document.createElement(kind === "video" ? "video" : "img");
+  media.className = "custom-background-media";
+  if (kind === "video") {
+    media.autoplay = true;
+    media.loop = true;
+    media.muted = true;
+    media.playsInline = true;
+    media.preload = "metadata";
+    media.setAttribute("aria-hidden", "true");
+  } else {
+    media.alt = "";
+    media.decoding = "async";
+  }
+  media.src = dataUrl;
+  els.backgroundLayer.replaceChildren(media);
+  if (kind === "video") media.play?.().catch(() => {});
+}
+
+function applyBackgroundState(background = {}) {
+  const enabled = Boolean(background?.enabled && background?.data_url);
+  if (!enabled) {
+    resetBackgroundLayer();
+    return;
+  }
+  const mediaType = String(background.media_type || "image/png");
+  root.setAttribute("data-custom-background", "active");
+  document.body.classList.add("has-custom-background");
+  renderBackgroundMedia(background.data_url, mediaType);
+  if (els.backgroundName) {
+    els.backgroundName.textContent = String(background.file_name || "自定义背景");
+  }
+  if (els.backgroundStatus) {
+    els.backgroundStatus.textContent = backgroundLabel(mediaType);
+  }
+  if (els.backgroundCard) els.backgroundCard.classList.add("is-active");
+}
+
+async function loadBackgroundState() {
+  if (!api) {
+    resetBackgroundLayer();
+    return;
+  }
+  try {
+    applyBackgroundState(await api.safeGet(BACKGROUND_ENDPOINT));
+  } catch (err) {
+    resetBackgroundLayer();
+    if (els.backgroundStatus) els.backgroundStatus.textContent = err.message || "背景读取失败";
+  }
+}
+
+async function uploadBackground(file) {
+  if (!file) return;
+  if (!api) throw new Error("当前环境无法保存自定义背景");
+  if (!isLikelyBackgroundFile(file)) {
+    throw new Error("请选择 PNG、JPG、WebP、GIF、MP4、WebM 或 OGV 文件");
+  }
+  if (file.size > BACKGROUND_MAX_BYTES) {
+    throw new Error("背景文件不能超过 48MB");
+  }
+  if (els.backgroundStatus) els.backgroundStatus.textContent = "上传中";
+  const dataUrl = await fileToDataUrl(file);
+  const saved = await api.safePost(BACKGROUND_ENDPOINT, {
+    data_url: dataUrl,
+    file_name: file.name || "自定义背景",
+    overlay: 0.5,
+    blur: 0,
+  });
+  applyBackgroundState(saved);
+  toast("自定义背景已保存");
+}
+
+async function resetBackground() {
+  if (!api) {
+    resetBackgroundLayer();
+    return;
+  }
+  const data = await api.safePost(BACKGROUND_RESET_ENDPOINT, {});
+  applyBackgroundState(data);
+  toast("已恢复默认背景");
 }
 
 function toast(message, type = "success") {
@@ -972,6 +1103,7 @@ function activatePreviewMode() {
   updateCounts();
   renderObjectList();
   renderWelcome();
+  resetBackgroundLayer();
   loadWeatherByIp();
 }
 
@@ -983,6 +1115,14 @@ function bindEvents() {
   els.privateTabBtn?.addEventListener("click", () => setMode("privates").catch((err) => toast(err.message, "error")));
   els.saveGroupBtn?.addEventListener("click", saveCurrentConfig);
   els.resetGroupBtn?.addEventListener("click", resetCurrentConfig);
+  els.uploadBackgroundBtn?.addEventListener("click", () => els.backgroundInput?.click());
+  els.backgroundInput?.addEventListener("change", () => {
+    uploadBackground(els.backgroundInput.files?.[0]).catch((err) => toast(err.message || "上传背景失败", "error"));
+    els.backgroundInput.value = "";
+  });
+  els.resetBackgroundBtn?.addEventListener("click", () => {
+    resetBackground().catch((err) => toast(err.message || "恢复背景失败", "error"));
+  });
   if (mediaQuery) {
     const handler = () => {
       if (themePreference === "auto") applyTheme();
@@ -1007,6 +1147,7 @@ async function init() {
     if (els.bridge) els.bridge.textContent = "AstrBot 页面桥接";
     await loadThemeFromBackend();
     applyTheme();
+    await loadBackgroundState();
     await loadBootstrap();
     loadLocationWeather();
   } catch (err) {
