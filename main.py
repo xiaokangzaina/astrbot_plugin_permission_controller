@@ -143,8 +143,8 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
 @register(
     "astrbot_plugin_permission_controller",
     "local",
-    "按 用户QQ-群号/群号列表 限制谁能调用模型/机器人",
-    "3.0.2",
+    "权限控制台：统一管理权限控制、融合模块、背景音乐和按钮音效",
+    "3.0.3",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。

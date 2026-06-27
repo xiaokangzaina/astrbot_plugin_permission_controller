@@ -4,166 +4,312 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AstrBot 权限控制台</title>
-  <link rel="stylesheet" href="./styles.css?v=permission_console_20260627_v302" />
+  <link rel="stylesheet" href="./styles.css?v=permission_console_20260627_v303" />
 </head>
 <body>
-  <main class="console-shell">
-    <header class="topbar">
-      <section class="brand-card" aria-label="权限控制台">
-        <img class="brand-avatar" src="./assets/brand-avatar.png" alt="" />
-        <div>
-          <p class="eyebrow">AstrBot 权限管理</p>
-          <h1>权限控制台</h1>
+  <div class="media-backdrop" id="mediaBackdrop" aria-hidden="true"></div>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="app-shell">
+    <aside class="navigation-panel">
+      <nav class="nav-rail" aria-label="融合控制台导航">
+        <span class="rail-logo" aria-hidden="true"></span>
+        <button class="rail-item active" type="button" data-rail-plugin="permission" title="权限控制器" aria-label="权限控制器">
+          <span class="rail-icon">◇</span><span>权限控制</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="raw-image" title="通用生图" aria-label="通用生图">
+          <span class="rail-icon">□</span><span>通用生图</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="aip-review" title="安全审核" aria-label="安全审核">
+          <span class="rail-icon">◆</span><span>安全审核</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="qqadmin" title="QQ群管" aria-label="QQ群管">
+          <span class="rail-icon">○</span><span>QQ群管</span>
+        </button>
+        <button class="rail-item" type="button" data-rail-plugin="webshot" title="网页截图" aria-label="网页截图">
+          <span class="rail-icon">⊙</span><span>网页截图</span>
+        </button>
+        <span class="rail-divider" aria-hidden="true"></span>
+        <div class="rail-status">
+          <span></span>
+          <strong>系统状态</strong>
+          <em>运行正常</em>
         </div>
-      </section>
+        <button class="rail-item rail-soft" id="railThemeBtn" type="button" title="切换主题" aria-label="切换主题">
+          <span class="rail-icon">◐</span><span>主题切换</span>
+        </button>
+        <div class="rail-admin">
+          <span class="admin-avatar"></span>
+          <strong>对象列表</strong>
+          <em>群聊 / 私聊</em>
+        </div>
+      </nav>
 
-      <section class="status-strip" aria-label="运行状态">
-        <article>
-          <span class="mini-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-          <div><small>策略变化</small><strong id="permissionPulseLabel">+0 项</strong></div>
-        </article>
-        <article><small>群聊对象</small><strong><span id="groupCountLabel">0</span> groups</strong></article>
-        <article><small>私聊对象</small><strong><span id="privateCountLabel">0</span> users</strong></article>
-        <article><small id="bridgeStateLabel">AstrBot 页面桥接</small><strong id="currentTimeLabel">--:--:--</strong></article>
-      </section>
-
-      <section class="toolbar" aria-label="页面操作">
-        <button class="icon-button" id="buttonSoundToggle" type="button" aria-pressed="true" title="按钮音效">
-          <span class="icon icon-wave" aria-hidden="true"></span>
-          <span id="buttonSoundText">按钮音效开</span>
-        </button>
-        <button class="icon-button" id="backgroundMusicToggle" type="button" aria-pressed="false" title="背景音乐">
-          <span class="icon icon-music" aria-hidden="true"></span>
-          <span id="backgroundMusicText">BGM 关</span>
-        </button>
-        <button class="icon-button" id="toggleThemeBtn" type="button" title="主题">
-          <span class="icon icon-theme" aria-hidden="true"></span>
-          <span id="themeText">自动</span>
-        </button>
-        <button class="icon-button" id="refreshGroupsBtn" type="button" title="同步列表">
-          <span class="icon icon-refresh" aria-hidden="true"></span>
-          <span>同步</span>
-        </button>
-        <button class="ghost-button" id="resetGroupBtn" type="button" disabled>清空配置</button>
-        <button class="primary-button" id="saveGroupBtn" type="button" disabled>保存配置</button>
-      </section>
-    </header>
-
-    <section class="layout-grid">
-      <aside class="object-panel panel">
-        <div class="panel-head">
+      <div class="navigation-content">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true"><span></span></div>
           <div>
-            <p class="eyebrow">Objects</p>
-            <h2>权限对象</h2>
+            <p class="eyebrow">对象列表</p>
+            <h1>群聊 / 私聊列表</h1>
           </div>
-          <span class="count-badge" id="targetCountLabel">0</span>
         </div>
 
-        <label class="search-box">
-          <span class="icon icon-search" aria-hidden="true"></span>
-          <input id="groupSearchInput" type="text" autocomplete="off" placeholder="搜索群名、群号或 QQ" />
-        </label>
-
-        <div class="segment-control" role="tablist" aria-label="对象类型">
-          <button id="groupTabBtn" class="active" type="button" role="tab" aria-selected="true">群聊</button>
-          <button id="privateTabBtn" type="button" role="tab" aria-selected="false">私聊</button>
+        <div class="nav-actions">
+          <button class="icon-button" id="toggleThemeBtn" type="button" title="切换主题" aria-label="切换主题">
+            <span class="icon icon-theme" aria-hidden="true"></span>
+            <span id="themeText">自动</span>
+          </button>
+        <button class="icon-button sound-toggle" id="buttonSoundToggle" type="button" aria-pressed="true" title="按钮音效" aria-label="按钮音效">
+          <span class="icon icon-click-sound" aria-hidden="true"></span>
+          <span id="buttonSoundText">音效开</span>
+        </button>
+        <button class="icon-button bgm-toggle" id="backgroundMusicToggle" type="button" aria-pressed="false" title="开启背景音乐" aria-label="开启背景音乐">
+          <span class="icon icon-bgm" aria-hidden="true"></span>
+          <span id="backgroundMusicText">BGM关</span>
+        </button>
+          <button class="icon-button" id="refreshGroupsBtn" type="button" title="同步列表" aria-label="同步列表">
+            <span class="icon icon-refresh" aria-hidden="true"></span>
+            <span>同步</span>
+          </button>
         </div>
+        <p class="sound-track-label" id="bgmTrackLabel">小k橘子 - 劫后余生</p>
 
-        <div class="list-head">
-          <span id="listTitle">群聊对象</span>
-          <b id="listCount">0</b>
-        </div>
-        <div id="groupList" class="object-list empty-state">正在同步对象列表</div>
-      </aside>
-
-      <section class="editor-panel panel">
-        <header class="editor-head">
-          <div>
-            <p class="eyebrow">Policy Editor</p>
-            <h2 id="currentGroupTitle">请选择配置对象</h2>
-            <p id="currentGroupMeta">从左侧选择群聊或私聊对象后开始配置。</p>
+        <section class="fusion-nav-section" aria-label="插件分区">
+          <div class="list-head">
+            <span>插件分区</span>
+            <b id="pluginCount">5</b>
           </div>
-        </header>
-
-        <section class="metric-grid" id="metricGrid" aria-label="配置概览"></section>
-        <section id="groupForm" class="form-stage empty-state">
-          <div class="welcome-panel">
-            <span>Permission Console</span>
-            <h3>选择一个对象，开始配置权限策略</h3>
-            <p>群聊可配置整群放行、允许用户、拒绝用户和成员思考强度；私聊好友可单独开启权限并覆盖模型思考强度。</p>
-          </div>
+          <div id="pluginNav" class="plugin-nav"></div>
         </section>
-      </section>
 
-      <aside class="insight-panel">
-        <section class="panel sound-card" id="soundCard">
-          <div class="panel-head compact">
-            <div>
-              <p class="eyebrow">Audio Layer</p>
-              <h2>音效模块</h2>
-            </div>
-            <span class="audio-led" id="soundLed" aria-hidden="true"></span>
-          </div>
-
-          <div class="sound-visuals" aria-hidden="true">
-            <span id="soundVisualBgm" class="sound-visual"><i></i><i></i><i></i><i></i></span>
-            <span id="soundVisualButton" class="sound-visual soft"><i></i><i></i><i></i></span>
-          </div>
-
-          <dl class="sound-state">
-            <div><dt>背景音轨</dt><dd id="bgmNameLabel">小k橘子 - 劫后余生.mp3</dd></div>
-            <div><dt>保存状态</dt><dd id="bgmStatusText">等待开启</dd></div>
-            <div><dt>按钮音效</dt><dd id="buttonSoundStatus">按钮音效开启</dd></div>
-          </dl>
-
-          <label class="range-row">
-            <span>背景音量</span>
-            <input id="bgmVolumeInput" type="range" min="0" max="100" value="62" />
+        <section id="permissionObjectPanel" class="permission-object-panel">
+          <label class="search-box" aria-label="搜索">
+            <span class="icon icon-search" aria-hidden="true"></span>
+            <input id="groupSearchInput" type="text" autocomplete="off" placeholder="搜索群聊 / 私聊 / QQ" />
           </label>
 
-          <input class="visually-hidden" id="audioUploadInput" type="file" accept="audio/*" />
-          <div class="sound-actions">
-            <button class="ghost-button" id="uploadAudioBtn" type="button">上传背景音</button>
-            <button class="ghost-button" id="resetAudioBtn" type="button">恢复默认</button>
+          <div class="segment-control" role="tablist" aria-label="对象类型">
+            <button id="groupTabBtn" class="active" type="button" role="tab" aria-selected="true">群聊</button>
+            <button id="privateTabBtn" type="button" role="tab" aria-selected="false">私聊</button>
           </div>
-        </section>
 
-        <section class="panel runtime-card">
-          <p class="eyebrow">运行环境</p>
-          <div class="runtime-clock">
-            <strong id="runtimeClockLabel">--:--:--</strong>
-            <span id="currentDateLabel">加载中</span>
+          <div class="list-head">
+            <span id="listTitle">群聊对象</span>
+            <b id="listCount">0</b>
           </div>
-          <dl class="runtime-list">
-            <div><dt>系统</dt><dd id="systemVersionLabel">读取中</dd></div>
-            <div><dt>Python / AstrBot</dt><dd id="pythonVersionLabel">Python --</dd></div>
-            <div><dt>所在地天气</dt><dd><strong id="weatherLabel">定位中</strong><span id="weatherMetaLabel">等待浏览器定位</span></dd></div>
-          </dl>
+          <div id="groupList" class="object-list empty-state">正在同步对象列表</div>
         </section>
+      </div>
+    </aside>
 
-        <section class="panel selected-card">
-          <p class="eyebrow">当前选择</p>
-          <div id="selectedSummary" class="selected-summary">
-            <strong>未选择</strong>
-            <span>等待选择配置对象</span>
-          </div>
-        </section>
+    <main class="work-panel">
+      <header class="work-header">
+        <div>
+          <p class="eyebrow" id="currentScopeLabel">融合控制台</p>
+          <h2 id="currentGroupTitle">选择配置对象</h2>
+          <p id="currentGroupMeta">从左侧选择群聊或私聊对象</p>
+        </div>
+        <div class="work-actions">
+          <button class="ghost-button" id="resetGroupBtn" type="button">清空配置</button>
+          <button class="primary-button" id="saveGroupBtn" type="button">保存配置</button>
+        </div>
+      </header>
 
-        <section class="panel priority-card">
-          <p class="eyebrow">判定链路</p>
-          <div class="priority-flow">
-            <div><b>1</b><span>非聊天事件直接放行</span></div>
-            <div><b>2</b><span>黑名单与管理员绕过</span></div>
-            <div><b>3</b><span>群整体或用户组合规则</span></div>
-            <div><b>4</b><span>未命中时停止事件</span></div>
+      <section class="metric-grid" id="metricGrid" aria-label="配置概览"></section>
+      <section id="groupForm" class="form-stage empty-state">请选择一个对象开始配置</section>
+    </main>
+
+    <aside class="insight-panel">
+      <section class="insight-block overview-card">
+        <div class="studio-title-row">
+          <p class="eyebrow">总览</p>
+          <span>实时</span>
+        </div>
+        <div class="overview-stat-grid">
+          <article><span>已融合</span><strong id="fusionLoadedCount">1/5</strong><em>模块</em></article>
+          <article><span>对象</span><strong id="fusionObjectCount">0</strong><em>群聊 / 私聊</em></article>
+          <article><span>功能</span><strong id="fusionMenuCount">0</strong><em>配置区块</em></article>
+          <article><span>状态</span><strong id="fusionHealthText">同步中</strong><em id="fusionHealthMeta">等待后端</em></article>
+        </div>
+        <div class="glass-chart">
+          <div class="donut-ring" aria-hidden="true"></div>
+          <div class="chart-legend">
+            <span><i class="legend-ok"></i>已初始化 <b id="fusionInitializedCount">0</b></span>
+            <span><i class="legend-wait"></i>待初始化 <b id="fusionPendingCount">0</b></span>
+            <span><i class="legend-error"></i>异常 <b id="fusionErrorCount">0</b></span>
           </div>
-        </section>
-      </aside>
-    </section>
-  </main>
+        </div>
+      </section>
+
+      <section class="insight-block trend-card">
+        <div class="studio-title-row">
+          <p class="eyebrow">活动</p>
+          <span>今日</span>
+        </div>
+        <div class="trend-curve" aria-hidden="true">
+          <span style="--h:36%"></span>
+          <span style="--h:62%"></span>
+          <span style="--h:48%"></span>
+          <span style="--h:76%"></span>
+          <span style="--h:54%"></span>
+          <span style="--h:88%"></span>
+          <span style="--h:68%"></span>
+        </div>
+        <div class="trend-bars">
+          <div><span>权限</span><b style="--w:82%"></b></div>
+          <div><span>审核</span><b style="--w:64%"></b></div>
+          <div><span>群管</span><b style="--w:72%"></b></div>
+        </div>
+      </section>
+
+      <section class="insight-block fusion-stack">
+        <div class="studio-title-row">
+          <p class="eyebrow">插件栈</p>
+          <span id="activePluginLabel">权限</span>
+        </div>
+        <div id="pluginStack" class="plugin-stack"></div>
+      </section>
+
+      <section class="insight-block sound-card" id="soundCard">
+        <div class="studio-title-row">
+          <p class="eyebrow">音效模块</p>
+          <span id="soundLed">待机</span>
+        </div>
+        <div class="sound-visuals" aria-hidden="true">
+          <span id="soundVisualBgm" class="sound-visual">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <span id="soundVisualButton" class="sound-visual soft">
+            <i></i><i></i><i></i>
+          </span>
+        </div>
+        <dl class="sound-state">
+          <div>
+            <dt>背景音轨</dt>
+            <dd id="bgmNameLabel">小k橘子 - 劫后余生.mp3</dd>
+          </div>
+          <div>
+            <dt>播放状态</dt>
+            <dd id="bgmStatusText">已关闭，已保存</dd>
+          </div>
+          <div>
+            <dt>按钮音效</dt>
+            <dd id="buttonSoundStatus">按钮音效开启</dd>
+          </div>
+        </dl>
+        <label class="range-field sound-volume">
+          <span>背景音量</span>
+          <input id="bgmVolumeInput" type="range" min="0" max="100" value="62" />
+        </label>
+        <input class="visually-hidden" id="audioUploadInput" type="file" accept="audio/*" />
+        <div class="sound-actions">
+          <button class="ghost-button" id="uploadAudioBtn" type="button">上传背景音</button>
+          <button class="ghost-button" id="resetAudioBtn" type="button">恢复默认</button>
+        </div>
+      </section>
+
+      <section class="insight-block background-studio">
+        <div class="studio-title-row">
+          <p class="eyebrow">背景设置</p>
+          <span id="backgroundStatusLabel">系统混色</span>
+        </div>
+        <input class="visually-hidden" id="backgroundInput" type="file" accept="image/gif,image/png,image/jpeg,image/webp" />
+        <label class="background-preview" id="backgroundDropzone" for="backgroundInput">
+          <span class="background-preview-glint" aria-hidden="true"></span>
+          <span class="background-preview-label">GIF / 图片</span>
+          <strong id="backgroundFileName">混色背景</strong>
+        </label>
+        <div class="background-actions">
+          <button class="ghost-button" id="uploadBackgroundBtn" type="button">上传背景</button>
+          <button class="ghost-button" id="resetBackgroundBtn" type="button">重置</button>
+        </div>
+        <div class="tone-control-grid" aria-label="自定义色调">
+          <label class="tone-field">
+            <span>主色</span>
+            <input id="tonePrimaryInput" type="color" value="#25d8ff" />
+          </label>
+          <label class="tone-field">
+            <span>辅色</span>
+            <input id="toneSecondaryInput" type="color" value="#8b74ff" />
+          </label>
+          <label class="tone-field">
+            <span>光感</span>
+            <input id="toneGlowInput" type="color" value="#ff6fa9" />
+          </label>
+          <label class="tone-field">
+            <span>背景卡</span>
+            <input id="toneBackdropCardInput" type="color" value="#5c78c8" />
+          </label>
+          <button class="ghost-button tone-reset-button" id="resetToneBtn" type="button">还原</button>
+        </div>
+        <div class="background-control-grid">
+          <label class="range-field">
+            <span>焦点 X</span>
+            <input id="backgroundCropX" type="range" min="0" max="100" value="50" />
+          </label>
+          <label class="range-field">
+            <span>焦点 Y</span>
+            <input id="backgroundCropY" type="range" min="0" max="100" value="50" />
+          </label>
+          <label class="range-field">
+            <span>遮罩</span>
+            <input id="backgroundOverlay" type="range" min="18" max="72" value="42" />
+          </label>
+          <label class="range-field">
+            <span>雾化</span>
+            <input id="backgroundBlur" type="range" min="0" max="36" value="0" />
+          </label>
+          <label class="range-field">
+            <span>背景卡透明度</span>
+            <input id="panelOpacityInput" type="range" min="4" max="38" value="22" />
+          </label>
+        </div>
+      </section>
+
+      <section class="insight-block runtime-card">
+        <p class="eyebrow">运行环境</p>
+        <div class="runtime-clock">
+          <strong id="currentTimeLabel">--:--:--</strong>
+          <span id="currentDateLabel">加载中</span>
+        </div>
+        <dl class="runtime-list">
+          <div>
+            <dt>系统</dt>
+            <dd id="systemVersionLabel">读取中</dd>
+          </div>
+          <div>
+            <dt>Python / AstrBot</dt>
+            <dd id="pythonVersionLabel">Python --</dd>
+          </div>
+          <div>
+            <dt>天气</dt>
+            <dd><strong id="weatherLabel">定位中</strong><span id="weatherMetaLabel">等待浏览器定位</span></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="insight-block selected-insight">
+        <p class="eyebrow">当前选择</p>
+        <div id="selectedSummary" class="selected-summary">
+          <strong>未选择</strong>
+          <span>等待选择配置对象</span>
+        </div>
+      </section>
+
+      <section class="insight-block priority-card">
+        <p class="eyebrow">优先级</p>
+        <div class="priority-flow">
+          <div><b>1</b><span>拒绝名单</span></div>
+          <div><b>2</b><span>整群放行</span></div>
+          <div><b>3</b><span>允许名单</span></div>
+          <div><b>4</b><span>默认拦截</span></div>
+        </div>
+      </section>
+    </aside>
+  </div>
 
   <div class="toast-layer" id="toastLayer"></div>
-  <script type="module" src="./sound.js?v=permission_console_20260627_v302"></script>
-  <script type="module" src="./app.js?v=permission_console_20260627_v302"></script>
+  <script type="module" src="./sound.js?v=permission_console_20260627_v303"></script>
+  <script type="module" src="./app.js?v=permission_console_20260627_v303"></script>
 </body>
 </html>

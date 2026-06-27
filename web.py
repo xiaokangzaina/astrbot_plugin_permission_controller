@@ -777,6 +777,11 @@ class PermissionWebController:
         endpoints = (
             ("https://ipwho.is/", "ipwho"),
             ("https://ipapi.co/json/", "ipapi"),
+            (
+                "http://ip-api.com/json/?fields=status,message,country,regionName,city,lat,lon",
+                "ip-api",
+            ),
+            ("https://get.geojs.io/v1/ip/geo.json", "geojs"),
         )
         last_error: Exception | None = None
         for url, provider in endpoints:
@@ -792,7 +797,7 @@ class PermissionWebController:
                         if item
                     )
                     error = payload.get("message")
-                else:
+                elif provider == "ipapi":
                     ok = not payload.get("error")
                     latitude = payload.get("latitude")
                     longitude = payload.get("longitude")
@@ -802,6 +807,34 @@ class PermissionWebController:
                         if item
                     )
                     error = payload.get("reason") or payload.get("message")
+                elif provider == "ip-api":
+                    ok = payload.get("status") == "success"
+                    latitude = payload.get("lat")
+                    longitude = payload.get("lon")
+                    place = " ".join(
+                        str(item)
+                        for item in (
+                            payload.get("city"),
+                            payload.get("regionName"),
+                            payload.get("country"),
+                        )
+                        if item
+                    )
+                    error = payload.get("message")
+                else:
+                    ok = bool(payload.get("latitude") and payload.get("longitude"))
+                    latitude = payload.get("latitude")
+                    longitude = payload.get("longitude")
+                    place = " ".join(
+                        str(item)
+                        for item in (
+                            payload.get("city"),
+                            payload.get("region"),
+                            payload.get("country"),
+                        )
+                        if item
+                    )
+                    error = payload.get("message")
                 latitude = float(latitude)
                 longitude = float(longitude)
                 if ok and -90 <= latitude <= 90 and -180 <= longitude <= 180:

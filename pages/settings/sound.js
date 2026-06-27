@@ -1,4 +1,6 @@
-const SOUND_STATE_KEY = "permission-console-sound-state-v2";
+const SOUND_STATE_KEY = "permission-console-sound-state-v3";
+const LEGACY_SOUND_STATE_KEY = "permission-console-sound-state-v2";
+const LEGACY_BGM_SWITCH_KEY = "permission-controller-background-sound-enabled";
 const SOUND_COOKIE_KEY = "permission_console_sound_state";
 const DB_NAME = "permission-console-audio";
 const DB_VERSION = 1;
@@ -12,7 +14,7 @@ const defaultState = {
   buttonEnabled: true,
   source: "default",
   trackName: DEFAULT_TRACK_NAME,
-  volume: 0.62,
+  volume: 0.76,
 };
 
 const state = {
@@ -51,22 +53,50 @@ function writeCookie(name, value) {
   } catch {}
 }
 
-function loadState() {
-  let payload = null;
+function readStoredJson(key) {
   try {
-    payload = JSON.parse(window.localStorage.getItem(SOUND_STATE_KEY) || "null");
-  } catch {}
-  if (!payload) {
-    try {
-      payload = JSON.parse(readCookie(SOUND_COOKIE_KEY) || "null");
-    } catch {}
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
   }
-  if (!payload || typeof payload !== "object") return;
-  state.bgmEnabled = Boolean(payload.bgmEnabled);
-  state.buttonEnabled = payload.buttonEnabled !== false;
-  state.source = payload.source === "custom" ? "custom" : "default";
-  state.trackName = String(payload.trackName || DEFAULT_TRACK_NAME);
-  state.volume = clamp(payload.volume ?? defaultState.volume, 0, 1);
+}
+
+function readLegacyBgmSwitch() {
+  let stored = "";
+  try {
+    stored = window.localStorage.getItem(LEGACY_BGM_SWITCH_KEY) || "";
+  } catch {}
+  if (!stored) {
+    const cookieValue = readCookie(LEGACY_BGM_SWITCH_KEY);
+    stored = cookieValue || "";
+  }
+  return stored === "on" ? true : stored === "off" ? false : null;
+}
+
+function loadState() {
+  const payload =
+    readStoredJson(SOUND_STATE_KEY) ||
+    readStoredJson(LEGACY_SOUND_STATE_KEY) ||
+    readStoredJsonFromCookie();
+  if (payload && typeof payload === "object") {
+    state.bgmEnabled = Boolean(payload.bgmEnabled);
+    state.buttonEnabled = payload.buttonEnabled !== false;
+    state.source = payload.source === "custom" ? "custom" : "default";
+    state.trackName = String(payload.trackName || DEFAULT_TRACK_NAME);
+    state.volume = clamp(payload.volume ?? defaultState.volume, 0, 1);
+  } else {
+    const legacySwitch = readLegacyBgmSwitch();
+    if (legacySwitch !== null) state.bgmEnabled = legacySwitch;
+  }
+}
+
+function readStoredJsonFromCookie() {
+  try {
+    return JSON.parse(readCookie(SOUND_COOKIE_KEY) || "null");
+  } catch {
+    return null;
+  }
 }
 
 function persistState() {
@@ -79,8 +109,10 @@ function persistState() {
   });
   try {
     window.localStorage.setItem(SOUND_STATE_KEY, payload);
+    window.localStorage.setItem(LEGACY_BGM_SWITCH_KEY, state.bgmEnabled ? "on" : "off");
   } catch {}
   writeCookie(SOUND_COOKIE_KEY, payload);
+  writeCookie(LEGACY_BGM_SWITCH_KEY, state.bgmEnabled ? "on" : "off");
 }
 
 function openDb() {
@@ -237,16 +269,16 @@ function toneClick() {
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(560, now);
-    osc.frequency.exponentialRampToValueAtTime(880, now + 0.06);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.exponentialRampToValueAtTime(760, now + 0.055);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.20, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+    gain.gain.exponentialRampToValueAtTime(0.28, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.15);
+    osc.stop(now + 0.18);
     pulseButtonVisual();
   } catch {}
 }
@@ -259,25 +291,41 @@ function pulseButtonVisual() {
   pulseButtonVisual.timer = window.setTimeout(() => node.classList.remove("is-active"), 520);
 }
 
+function setText(nodes, value) {
+  nodes.filter(Boolean).forEach((node) => {
+    node.textContent = value;
+  });
+}
+
 function updateUi(message = "") {
   const els = state.elements;
   const isPlaying = Boolean(state.audio && !state.audio.paused && state.bgmEnabled);
   document.body.classList.toggle("sound-bgm-on", state.bgmEnabled);
   if (els.card) els.card.classList.toggle("is-playing", isPlaying);
+  if (els.led) els.led.textContent = isPlaying ? "播放中" : state.bgmEnabled ? "已开启" : "待机";
   if (els.bgmToggle) {
     els.bgmToggle.classList.toggle("is-on", state.bgmEnabled);
     els.bgmToggle.setAttribute("aria-pressed", String(state.bgmEnabled));
     els.bgmToggle.title = state.bgmEnabled ? "关闭背景音乐" : "开启背景音乐";
+    els.bgmToggle.setAttribute("aria-label", els.bgmToggle.title);
   }
-  if (els.bgmText) els.bgmText.textContent = state.bgmEnabled ? "BGM 开" : "BGM 关";
+  setText(els.bgmText, state.bgmEnabled ? "BGM开" : "BGM关");
   if (els.buttonToggle) {
     els.buttonToggle.classList.toggle("is-on", state.buttonEnabled);
     els.buttonToggle.setAttribute("aria-pressed", String(state.buttonEnabled));
     els.buttonToggle.title = state.buttonEnabled ? "关闭按钮音效" : "开启按钮音效";
+    els.buttonToggle.setAttribute("aria-label", els.buttonToggle.title);
   }
-  if (els.buttonText) els.buttonText.textContent = state.buttonEnabled ? "按钮音效开" : "按钮音效关";
-  if (els.buttonStatus) els.buttonStatus.textContent = state.buttonEnabled ? "按钮音效开启" : "按钮音效关闭";
-  if (els.name) els.name.textContent = state.trackName || DEFAULT_TRACK_NAME;
+  setText(els.buttonText, state.buttonEnabled ? "音效开" : "音效关");
+  if (els.buttonStatus) {
+    els.buttonStatus.textContent = state.buttonEnabled ? "按钮音效开启" : "按钮音效关闭";
+  }
+  setText(els.trackName, state.trackName || DEFAULT_TRACK_NAME);
+  if (els.trackLabel) {
+    els.trackLabel.textContent = `${state.trackName || DEFAULT_TRACK_NAME} · ${
+      state.source === "custom" ? "自定义背景音" : "默认曲目"
+    }`;
+  }
   if (els.status) {
     els.status.textContent =
       message ||
@@ -287,8 +335,8 @@ function updateUi(message = "") {
           ? state.waitingForGesture
             ? "已保存，点击页面后播放"
             : isPlaying
-              ? "正在播放，已同步"
-              : "已保存，等待播放"
+              ? "正在播放，已保存"
+              : "已开启，等待播放"
           : "已关闭，已保存");
   }
   if (els.volume) els.volume.value = String(Math.round(state.volume * 100));
@@ -302,8 +350,8 @@ async function handleUpload(file) {
     updateUi("请选择音频文件");
     return;
   }
-  if (file.size > 24 * 1024 * 1024) {
-    updateUi("音频文件不能超过 24MB");
+  if (file.size > 32 * 1024 * 1024) {
+    updateUi("音频文件不能超过 32MB");
     return;
   }
   await idbPut(CUSTOM_AUDIO_KEY, file);
@@ -403,12 +451,17 @@ async function initSoundModule() {
   loadState();
   state.elements = {
     card: document.getElementById("soundCard"),
-    bgmToggle: document.getElementById("backgroundMusicToggle"),
-    bgmText: document.getElementById("backgroundMusicText"),
+    led: document.getElementById("soundLed"),
+    bgmToggle: document.getElementById("backgroundMusicToggle") || document.getElementById("bgmToggleBtn"),
+    bgmText: [
+      document.getElementById("backgroundMusicText"),
+      document.getElementById("bgmStateText"),
+    ],
     buttonToggle: document.getElementById("buttonSoundToggle"),
-    buttonText: document.getElementById("buttonSoundText"),
+    buttonText: [document.getElementById("buttonSoundText")],
     buttonStatus: document.getElementById("buttonSoundStatus"),
-    name: document.getElementById("bgmNameLabel"),
+    trackName: [document.getElementById("bgmNameLabel")],
+    trackLabel: document.getElementById("bgmTrackLabel"),
     status: document.getElementById("bgmStatusText"),
     input: document.getElementById("audioUploadInput"),
     upload: document.getElementById("uploadAudioBtn"),
@@ -421,6 +474,7 @@ async function initSoundModule() {
   bindGlobalButtonSound();
   bindLifecycle();
   await restoreCustomNameIfNeeded();
+  persistState();
   updateUi();
   if (state.bgmEnabled) {
     state.waitingForGesture = true;
@@ -428,7 +482,14 @@ async function initSoundModule() {
   }
   window.PermissionConsoleSound = {
     playClick: toneClick,
-    getState: () => ({ ...state, audio: undefined, audioContext: undefined }),
+    getState: () => ({
+      bgmEnabled: state.bgmEnabled,
+      buttonEnabled: state.buttonEnabled,
+      source: state.source,
+      trackName: state.trackName,
+      volume: state.volume,
+      waitingForGesture: state.waitingForGesture,
+    }),
   };
 }
 

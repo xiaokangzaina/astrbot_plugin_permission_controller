@@ -449,16 +449,19 @@ class PermissionPageService:
     def _build_friend_info(self, user_id: str, source: str = "fallback") -> dict[str, Any]:
         user_id = str(user_id).strip()
         config = self._read_current_config()
+        enabled_users = set(_normalize_list(config.get("private_chat_users")))
         private_reasoning = _reasoning_map(config.get("reasoning_private_users")).get(user_id, "")
+        is_configured = user_id in enabled_users or bool(private_reasoning)
         return {
             "user_id": user_id,
             "nickname": f"好友 {user_id}",
             "remark": "",
             "avatar": f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640",
             "source": source,
-            "private_enabled": user_id in set(_normalize_list(config.get("private_chat_users"))),
+            "private_enabled": user_id in enabled_users,
             "reasoning_effort": private_reasoning,
             "reasoning_label": _reasoning_label(private_reasoning),
+            "is_configured": is_configured,
         }
 
     def _normalize_friend_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -502,6 +505,26 @@ class PermissionPageService:
         config = self._read_current_config()
         touched_at = self._group_config_touch_times().get(group_id, 0)
         group_reasoning = _reasoning_map(config.get("reasoning_group_defaults")).get(group_id, "")
+        allowed_groups = set(_normalize_list(config.get("allowed_groups")))
+        has_user_rule = any(
+            rule.endswith(f"-{group_id}")
+            for rule in _normalize_list(config.get("simple_rules"))
+        )
+        has_deny_rule = any(
+            rule.endswith(f"-{group_id}")
+            for rule in _normalize_list(config.get("group_deny_rules"))
+        )
+        has_member_reasoning = any(
+            target.endswith(f"-{group_id}")
+            for target in _reasoning_map(config.get("reasoning_group_user_rules"))
+        )
+        is_configured = (
+            group_id in allowed_groups
+            or has_user_rule
+            or has_deny_rule
+            or bool(group_reasoning)
+            or has_member_reasoning
+        )
         return {
             "group_id": group_id,
             "group_name": f"群 {group_id}",
@@ -510,9 +533,10 @@ class PermissionPageService:
             "max_member_count": 0,
             "source": source,
             "config_updated_at": touched_at,
-            "group_enabled": group_id in set(_normalize_list(config.get("allowed_groups"))),
+            "group_enabled": group_id in allowed_groups,
             "reasoning_effort": group_reasoning,
             "reasoning_label": _reasoning_label(group_reasoning),
+            "is_configured": is_configured,
         }
 
     def _normalize_group_item(self, item: dict[str, Any]) -> dict[str, Any]:

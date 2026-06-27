@@ -1,8 +1,8 @@
 name: astrbot_plugin_permission_controller
 display_name: 权限控制台
-desc: 面向 AstrBot 的权限控制台，用 QQ 群、QQ 用户、私聊白名单、群聊黑名单和模型思考强度控制机器人调用权限，内置默认背景音乐与独立按钮音效。
-help: 安装后打开插件设置页，左侧选择群聊或私聊对象，中间编辑权限策略，右侧可控制背景音乐、按钮音效和运行状态。背景音乐默认使用“小k橘子 - 劫后余生”，也支持在前端上传自定义背景音。
-version: v3.0.2
+desc: 五合一 AstrBot 权限控制台，统一管理权限控制、通用生图、安全审核、QQ群管和网页截图，内置默认背景音乐、按钮音效和自定义背景音上传。
+help: 安装后打开插件配置页，左侧切换功能模块，中间选择群聊或私聊对象，右侧直接编辑配置项；背景音乐和按钮音效可独立开关并自动保存，自定义背景音可在音效模块上传。
+version: v3.0.3
 author: xiaokangzaina
 repo: "https://github.com/xiaokangzaina/astrbot_plugin_permission_controller"
 astrbot_version: ">=4.0.0,<5"
