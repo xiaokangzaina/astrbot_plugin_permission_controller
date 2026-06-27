@@ -28,7 +28,9 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 THEME_STATE_FILE = PLUGIN_DIR / "data" / "settings_theme.json"
 TONE_STATE_FILE = PLUGIN_DIR / "data" / "settings_tone.json"
 BACKGROUND_STATE_FILE = PLUGIN_DIR / "data" / "settings_background.json"
+AUDIO_STATE_FILE = PLUGIN_DIR / "data" / "settings_audio.json"
 BACKGROUND_MEDIA_DIR = PLUGIN_DIR / "data" / "backgrounds"
+DEFAULT_AUDIO_FILE = PLUGIN_DIR / "pages" / "settings" / "assets" / "audio" / "rebirth-after-disaster.mp3"
 FUSION_OVERRIDES_FILE = PLUGIN_DIR / "data" / "fusion_overrides.json"
 VALID_THEME_MODES = {"auto", "light", "dark"}
 VALID_FUSION_TARGET_TYPES = {"global", "groups", "privates"}
@@ -84,6 +86,15 @@ DEFAULT_TONE_STATE = {
     "glow": "#ff6fa9",
     "backdropCard": "#5c78c8",
     "panelOpacity": 0.22,
+    "updated_at": 0,
+}
+
+DEFAULT_AUDIO_STATE = {
+    "bgmEnabled": False,
+    "buttonEnabled": True,
+    "source": "default",
+    "trackName": "",
+    "volume": 0.76,
     "updated_at": 0,
 }
 
@@ -151,6 +162,47 @@ def _write_tone_state(payload: dict[str, Any]) -> dict[str, Any]:
         json.dumps(state, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    return state
+
+
+def _normalize_audio_state(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    source = {**DEFAULT_AUDIO_STATE, **(payload or {})}
+    audio_source = str(source.get("source") or "default").strip().lower()
+    if audio_source not in {"default", "custom"}:
+        audio_source = "default"
+    return {
+        "bgmEnabled": bool(source.get("bgmEnabled")),
+        "buttonEnabled": source.get("buttonEnabled") is not False,
+        "source": audio_source,
+        "trackName": str(source.get("trackName") or "")[:180],
+        "volume": round(_clamp_number(source.get("volume"), DEFAULT_AUDIO_STATE["volume"], 0, 1), 3),
+        "updated_at": int(source.get("updated_at") or 0),
+    }
+
+
+def _read_audio_state() -> dict[str, Any]:
+    try:
+        payload = json.loads(AUDIO_STATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            state = _normalize_audio_state(payload)
+            state["persisted"] = True
+            return state
+    except Exception:
+        pass
+    state = _normalize_audio_state()
+    state["persisted"] = False
+    return state
+
+
+def _write_audio_state(payload: dict[str, Any]) -> dict[str, Any]:
+    state = _normalize_audio_state(payload)
+    state["updated_at"] = int(time.time())
+    AUDIO_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUDIO_STATE_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    state["persisted"] = True
     return state
 
 
@@ -413,6 +465,24 @@ class PermissionWebController:
                 "Reset settings page custom background",
             ),
             (
+                "/settings/audio/default",
+                self.page_default_audio,
+                ["GET"],
+                "Load bundled default background audio",
+            ),
+            (
+                "/settings/audio/state",
+                self.page_get_audio_state,
+                ["GET"],
+                "Load settings page audio preference",
+            ),
+            (
+                "/settings/audio/state",
+                self.page_save_audio_state,
+                ["POST"],
+                "Save settings page audio preference",
+            ),
+            (
                 "/settings/fusion",
                 self.page_fusion_status,
                 ["GET"],
@@ -474,18 +544,6 @@ class PermissionWebController:
                 ["POST"],
                 "Reset one group config",
             ),
-            (
-                "/settings/save",
-                self.page_save,
-                ["POST"],
-                "Save permission settings",
-            ),
-            (
-                "/settings/reset",
-                self.page_reset,
-                ["POST"],
-                "Reset permission settings to default",
-            ),
         ]
         for path, handler, methods, desc in routes:
             self.context.register_web_api(
@@ -529,9 +587,28 @@ class PermissionWebController:
     async def page_ping(self):
         return self._jsonify({"ok": True, "message": "pong"})
 
-    async def page_bootstrap(self):
+    async def page_default_audio(self):
+        if not DEFAULT_AUDIO_FILE.exists():
+            raise RuntimeError("default audio file is missing")
+        content = DEFAULT_AUDIO_FILE.read_bytes()
+        if len(content) < 1024:
+            raise RuntimeError("default audio file is invalid")
         return self._jsonify(
-            {"ok": True, "data": self.service.get_bootstrap_payload()}
+            {
+                "ok": True,
+                "data": {
+                    "name": "小k橘子 - 劫后余生.mp3",
+                    "mime": "audio/mpeg",
+                    "content": base64.b64encode(content).decode("ascii"),
+                },
+            }
+        )
+
+    async def page_bootstrap(self):
+        payload = self.service.get_bootstrap_payload()
+        payload["groups"] = await self.service.list_groups()
+        return self._jsonify(
+            {"ok": True, "data": payload}
         )
 
     async def page_fusion_status(self):
@@ -887,12 +964,19 @@ class PermissionWebController:
             {"ok": True, "data": _reset_background_preference()}
         )
 
+    async def page_get_audio_state(self):
+        return self._jsonify({"ok": True, "data": _read_audio_state()})
+
+    async def page_save_audio_state(self):
+        payload = await self._request().get_json(force=True, silent=True) or {}
+        return self._jsonify({"ok": True, "data": _write_audio_state(payload)})
+
     async def page_refresh_groups(self):
-        groups = await self.service.list_groups(force=True)
+        groups = await self.service.list_groups()
         return self._jsonify({"ok": True, "data": groups})
 
     async def page_refresh_private_contacts(self):
-        contacts = await self.service.list_private_contacts(force=True)
+        contacts = await self.service.list_private_contacts()
         return self._jsonify({"ok": True, "data": contacts})
 
     async def page_get_private_contact(self):
@@ -931,16 +1015,3 @@ class PermissionWebController:
         result = self.service.reset_group_config(payload.get("group_id", ""))
         return self._jsonify({"ok": True, "message": "群配置已重置", "data": result})
 
-    async def page_save(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
-        config = payload.get("config", payload)
-        result = self.service.update_config(config)
-        return self._jsonify(
-            {"ok": True, "message": "配置已保存", "data": result}
-        )
-
-    async def page_reset(self):
-        result = self.service.reset_config()
-        return self._jsonify(
-            {"ok": True, "message": "已恢复默认配置", "data": result}
-        )

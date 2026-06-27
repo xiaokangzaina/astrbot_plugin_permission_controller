@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import re
+import inspect
 import sys
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from astrbot.api import logger
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 GROUP_TOUCH_FILE = PLUGIN_DIR / "data" / "group_config_touch_times.json"
+PRIVATE_TOUCH_FILE = PLUGIN_DIR / "data" / "private_config_touch_times.json"
 
 # schema 顶层分组键 -> 其 items
 # 配置在 _conf_schema.json 中是两层结构：
@@ -148,16 +150,16 @@ class PermissionPageService:
             "system": self._build_system_info(),
         }
 
-    async def list_groups(self, force: bool = False) -> list[dict[str, Any]]:
+    async def list_groups(self) -> list[dict[str, Any]]:
         """返回机器人已加入的 QQ 群列表；实时列表不可用时才回退到配置群号。"""
         groups: dict[str, dict[str, Any]] = {}
         live_loaded = False
         for client in self._iter_qq_clients():
             try:
-                result = await client.call_action("get_group_list")
+                result = await self._call_client_action(client, "get_group_list")
                 live_loaded = True
                 for item in self._extract_group_list(result):
-                    group_id = str(item.get("group_id", "")).strip()
+                    group_id = self._raw_group_id(item)
                     if not group_id or group_id in groups:
                         continue
                     groups[group_id] = self._normalize_group_item(item)
@@ -168,16 +170,16 @@ class PermissionPageService:
                 groups.setdefault(item["group_id"], item)
         return self._sort_groups_by_recent_config(groups.values())
 
-    async def list_private_contacts(self, force: bool = False) -> list[dict[str, Any]]:
+    async def list_private_contacts(self) -> list[dict[str, Any]]:
         """返回机器人已添加的 QQ 好友列表；实时列表不可用时才回退到配置好友。"""
         contacts: dict[str, dict[str, Any]] = {}
         live_loaded = False
         for client in self._iter_qq_clients():
             try:
-                result = await client.call_action("get_friend_list")
+                result = await self._call_client_action(client, "get_friend_list")
                 live_loaded = True
                 for item in self._extract_friend_list(result):
-                    user_id = str(item.get("user_id", "")).strip()
+                    user_id = self._raw_friend_id(item)
                     if not user_id or user_id in contacts:
                         continue
                     contacts[user_id] = self._normalize_friend_item(item)
@@ -189,10 +191,7 @@ class PermissionPageService:
                 contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
             for user_id in _reasoning_map(config.get("reasoning_private_users")):
                 contacts.setdefault(user_id, self._build_friend_info(user_id, source="configured"))
-        return sorted(
-            contacts.values(),
-            key=lambda item: str(item.get("nickname") or item.get("remark") or item.get("user_id") or ""),
-        )
+        return self._sort_private_contacts_by_recent_config(contacts.values())
 
     def get_group_config(self, group_id: str) -> dict[str, Any]:
         """把全局配置映射成单群配置页需要的数据。"""
@@ -365,6 +364,7 @@ class PermissionPageService:
                 ],
             }
         )
+        self._touch_private_config(user_id)
         return self.get_private_contact_config(user_id)
 
     def reset_private_contact_config(self, user_id: str) -> dict[str, Any]:
@@ -374,77 +374,150 @@ class PermissionPageService:
             {"private_enabled": False, "reasoning_effort": ""},
         )
 
-    def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """根据前端提交的扁平 key->value，按 schema 清洗并写回配置文件。"""
-        if not isinstance(payload, dict):
-            raise ValueError("payload must be an object")
-
-        flat_schema = self._flatten_schema_items()
-        sanitized: dict[str, Any] = {}
-        for key, field_schema in flat_schema.items():
-            if key not in payload:
-                continue
-            sanitized[key] = self._sanitize_value(payload[key], field_schema)
-
-        if not sanitized:
-            raise ValueError("no valid config fields to update")
-
-        self._write_config(sanitized)
-        return self._read_current_config()
-
-    def reset_config(self) -> dict[str, Any]:
-        """将所有字段恢复为 schema 默认值并写回。"""
-        flat_schema = self._flatten_schema_items()
-        defaults = {
-            key: field.get("default") for key, field in flat_schema.items()
-        }
-        self._write_config(defaults)
-        return self._read_current_config()
-
     # ---------- 群列表辅助 ----------
+
+    def _iter_platform_instances(self) -> list[Any]:
+        try:
+            manager = self.plugin.context.platform_manager
+        except Exception:
+            return []
+
+        instances: list[Any] = []
+        seen: set[int] = set()
+
+        def append_many(value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, dict):
+                iterable = value.values()
+            elif isinstance(value, (list, tuple, set)):
+                iterable = value
+            else:
+                iterable = (value,)
+            for item in iterable:
+                if item is None:
+                    continue
+                marker = id(item)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                instances.append(item)
+
+        for attr in ("platform_insts", "platforms", "platform_instances", "instances"):
+            try:
+                append_many(getattr(manager, attr, None))
+            except Exception:
+                continue
+        try:
+            getter = getattr(manager, "get_insts", None)
+            if callable(getter):
+                append_many(getter())
+        except Exception:
+            pass
+        return instances
 
     def _iter_qq_clients(self) -> list[Any]:
         clients: list[Any] = []
-        try:
-            from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
-                AiocqhttpAdapter,
-            )
-        except Exception:
-            AiocqhttpAdapter = None
-        try:
-            platform_insts = self.plugin.context.platform_manager.platform_insts
-        except Exception:
-            platform_insts = []
-        for inst in platform_insts:
-            if AiocqhttpAdapter is not None and not isinstance(inst, AiocqhttpAdapter):
-                continue
+        seen: set[int] = set()
+
+        def append(candidate: Any) -> None:
+            if candidate is None or not self._can_call_action(candidate):
+                return
+            marker = id(candidate)
+            if marker in seen:
+                return
+            seen.add(marker)
+            clients.append(candidate)
+
+        for inst in self._iter_platform_instances():
             try:
-                client = inst.get_client()
+                getter = getattr(inst, "get_client", None)
+                client = getter() if callable(getter) else None
             except Exception:
-                continue
-            if client is not None:
-                clients.append(client)
+                client = None
+            append(client)
+            for attr in ("bot", "client", "api"):
+                try:
+                    append(getattr(inst, attr, None))
+                except Exception:
+                    continue
+            append(inst)
         return clients
 
     @staticmethod
+    def _can_call_action(candidate: Any) -> bool:
+        if callable(getattr(candidate, "call_action", None)):
+            return True
+        api = getattr(candidate, "api", None)
+        return callable(getattr(api, "call_action", None))
+
+    @staticmethod
+    async def _call_client_action(client: Any, action: str, **params: Any) -> Any:
+        for target in (client, getattr(client, "api", None)):
+            call_action = getattr(target, "call_action", None)
+            if not callable(call_action):
+                continue
+            result = call_action(action, **params)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+        raise RuntimeError("client does not support call_action")
+
+    @staticmethod
     def _extract_group_list(result: Any) -> list[dict[str, Any]]:
-        if isinstance(result, list):
-            return [item for item in result if isinstance(item, dict)]
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [item for item in data if isinstance(item, dict)]
-        return []
+        return PermissionPageService._extract_list_payload(
+            result,
+            ("data", "groups", "group_list", "groupList", "items", "list", "result"),
+        )
 
     @staticmethod
     def _extract_friend_list(result: Any) -> list[dict[str, Any]]:
+        return PermissionPageService._extract_list_payload(
+            result,
+            ("data", "friends", "friend_list", "friendList", "items", "list", "result"),
+        )
+
+    @staticmethod
+    def _extract_list_payload(result: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
         if isinstance(result, list):
             return [item for item in result if isinstance(item, dict)]
         if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [item for item in data if isinstance(item, dict)]
+            for key in keys:
+                value = result.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+                if isinstance(value, dict):
+                    nested = PermissionPageService._extract_list_payload(value, keys)
+                    if nested:
+                        return nested
         return []
+
+    @staticmethod
+    def _first_present(item: dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                return value
+        return ""
+
+    @staticmethod
+    def _raw_group_id(item: dict[str, Any]) -> str:
+        return str(
+            PermissionPageService._first_present(
+                item,
+                "group_id",
+                "groupId",
+                "group_code",
+                "groupCode",
+                "id",
+            )
+        ).strip()
+
+    @staticmethod
+    def _raw_friend_id(item: dict[str, Any]) -> str:
+        return str(
+            PermissionPageService._first_present(item, "user_id", "userId", "uin", "id")
+        ).strip()
 
     def _build_friend_info(self, user_id: str, source: str = "fallback") -> dict[str, Any]:
         user_id = str(user_id).strip()
@@ -458,6 +531,7 @@ class PermissionPageService:
             "remark": "",
             "avatar": f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640",
             "source": source,
+            "config_updated_at": self._private_config_touch_times().get(user_id, 0),
             "private_enabled": user_id in enabled_users,
             "reasoning_effort": private_reasoning,
             "reasoning_label": _reasoning_label(private_reasoning),
@@ -465,9 +539,9 @@ class PermissionPageService:
         }
 
     def _normalize_friend_item(self, item: dict[str, Any]) -> dict[str, Any]:
-        user_id = str(item.get("user_id", "")).strip()
+        user_id = self._raw_friend_id(item)
         normalized = self._build_friend_info(user_id, source="live")
-        nickname = str(item.get("nickname", "")).strip()
+        nickname = str(self._first_present(item, "nickname", "nick", "name")).strip()
         remark = str(item.get("remark", "")).strip()
         normalized.update({"nickname": remark or nickname or f"好友 {user_id}", "remark": remark})
         return normalized
@@ -540,14 +614,40 @@ class PermissionPageService:
         }
 
     def _normalize_group_item(self, item: dict[str, Any]) -> dict[str, Any]:
-        group_id = str(item.get("group_id", "")).strip()
-        group_name = str(item.get("group_name", "")).strip() or f"群 {group_id}"
+        group_id = self._raw_group_id(item)
+        group_name = str(
+            self._first_present(
+                item,
+                "group_name",
+                "groupName",
+                "group_remark",
+                "name",
+            )
+        ).strip() or f"群 {group_id}"
         normalized = self._build_group_info(group_id, source="live")
         normalized.update(
             {
                 "group_name": group_name,
-                "member_count": self._safe_int(item.get("member_count"), 0),
-                "max_member_count": self._safe_int(item.get("max_member_count"), 0),
+                "member_count": self._safe_int(
+                    self._first_present(
+                        item,
+                        "member_count",
+                        "memberCount",
+                        "member_num",
+                        "memberNum",
+                    ),
+                    0,
+                ),
+                "max_member_count": self._safe_int(
+                    self._first_present(
+                        item,
+                        "max_member_count",
+                        "maxMemberCount",
+                        "max_member_num",
+                        "maxMemberNum",
+                    ),
+                    0,
+                ),
                 "config_updated_at": self._group_config_touch_times().get(group_id, 0),
             }
         )
@@ -559,13 +659,37 @@ class PermissionPageService:
         for item in group_list:
             group = dict(item)
             group_id = str(group.get("group_id", "")).strip()
-            group["config_updated_at"] = self._safe_int(touch_times.get(group_id), 0)
+            group["config_updated_at"] = self._safe_int(
+                touch_times.get(group_id),
+                self._safe_int(group.get("config_updated_at"), 0),
+            )
             enriched.append(group)
         return sorted(
             enriched,
             key=lambda item: (
                 -self._safe_int(item.get("config_updated_at"), 0),
+                -int(bool(item.get("is_configured"))),
                 str(item.get("group_name") or item.get("group_id") or ""),
+            ),
+        )
+
+    def _sort_private_contacts_by_recent_config(self, contact_list: Any) -> list[dict[str, Any]]:
+        touch_times = self._private_config_touch_times()
+        enriched = []
+        for item in contact_list:
+            contact = dict(item)
+            user_id = str(contact.get("user_id", "")).strip()
+            contact["config_updated_at"] = self._safe_int(
+                touch_times.get(user_id),
+                self._safe_int(contact.get("config_updated_at"), 0),
+            )
+            enriched.append(contact)
+        return sorted(
+            enriched,
+            key=lambda item: (
+                -self._safe_int(item.get("config_updated_at"), 0),
+                -int(bool(item.get("is_configured"))),
+                str(item.get("nickname") or item.get("remark") or item.get("user_id") or ""),
             ),
         )
 
@@ -596,6 +720,34 @@ class PermissionPageService:
             )
         except Exception as exc:
             logger.warning("[PermissionController] 记录群配置更新时间失败: %s", exc)
+
+    def _private_config_touch_times(self) -> dict[str, int]:
+        try:
+            data = json.loads(PRIVATE_TOUCH_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(user_id): self._safe_int(timestamp, 0)
+            for user_id, timestamp in data.items()
+            if str(user_id).strip()
+        }
+
+    def _touch_private_config(self, user_id: str) -> None:
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            return
+        touch_times = self._private_config_touch_times()
+        touch_times[user_id] = int(time.time() * 1000)
+        try:
+            PRIVATE_TOUCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PRIVATE_TOUCH_FILE.write_text(
+                json.dumps(touch_times, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("[PermissionController] 记录私聊配置更新时间失败: %s", exc)
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
@@ -719,20 +871,3 @@ class PermissionPageService:
                 return group_name
         return None
 
-    def _sanitize_value(self, value: Any, field_schema: dict[str, Any]) -> Any:
-        field_type = field_schema.get("type", "string")
-        if field_type == "bool":
-            parsed = _parse_bool(value)
-            if parsed is None:
-                raise ValueError(f"invalid bool value: {value!r}")
-            return parsed
-        if field_type == "list":
-            return _normalize_list(value)
-        if field_type == "select":
-            return _normalize_reasoning_effort(value)
-        if field_type == "int":
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                raise ValueError(f"invalid int value: {value!r}")
-        return str(value if value is not None else field_schema.get("default", ""))
