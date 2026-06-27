@@ -144,7 +144,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "权限控制台：统一管理权限控制、融合模块、背景音乐和按钮音效",
-    "3.0.4",
+    "3.0.5",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
@@ -358,6 +358,24 @@ class GroupUserWhitelistPlugin(Star):
                 return value.get("event")
         return None
 
+    @staticmethod
+    def _as_fusion_wrapped_callable(callback):
+        if getattr(callback, "_permission_controller_fusion_wrapped", False):
+            return callback
+        if isinstance(callback, functools.partial):
+            target = getattr(callback, "func", None)
+            if getattr(target, "_permission_controller_fusion_wrapped", False):
+                return target
+        return None
+
+    def _bind_bundled_instance_once(self, callback, instance):
+        wrapped = self._as_fusion_wrapped_callable(callback)
+        if wrapped is not None:
+            return wrapped
+        if isinstance(callback, functools.partial):
+            return callback
+        return functools.partial(callback, instance)
+
     @classmethod
     def _fusion_event_target(cls, event) -> tuple[str, str] | None:
         if event is None:
@@ -431,8 +449,9 @@ class GroupUserWhitelistPlugin(Star):
         return enabled
 
     def _wrap_bundled_callable(self, plugin_id: str, callback, disabled_result=None):
-        if getattr(callback, "_permission_controller_fusion_wrapped", False):
-            return callback
+        wrapped_existing = self._as_fusion_wrapped_callable(callback)
+        if wrapped_existing is not None:
+            return wrapped_existing
 
         wrapped_target = getattr(callback, "func", callback)
         is_async_callback = inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(wrapped_target)
@@ -462,7 +481,7 @@ class GroupUserWhitelistPlugin(Star):
         plugin_id = self._bundled_plugin_id_from_module(module_name)
         full_names = []
         for handler in star_handlers_registry.get_handlers_by_module_name(module_name):
-            bound_handler = functools.partial(handler.handler, instance)
+            bound_handler = self._bind_bundled_instance_once(handler.handler, instance)
             handler.handler = self._wrap_bundled_callable(plugin_id, bound_handler)
             full_names.append(handler.handler_full_name)
 
@@ -483,7 +502,7 @@ class GroupUserWhitelistPlugin(Star):
                 handler = getattr(tool, "handler", None)
                 if handler and getattr(handler, "__module__", None) == module_name:
                     tool.handler_module_path = module_name
-                    bound_tool_handler = functools.partial(handler, instance)
+                    bound_tool_handler = self._bind_bundled_instance_once(handler, instance)
                     tool.handler = self._wrap_bundled_callable(
                         plugin_id,
                         bound_tool_handler,

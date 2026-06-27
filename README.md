@@ -113,6 +113,11 @@ data/plugins/astrbot_plugin_permission_controller
 
 ## 版本
 
+### v3.0.5
+
+- Fix duplicated fusion handler binding after bundled plugin initialization/reload.
+- Fix `QQAdminPlugin.on_platform_loaded()` and `GroupAipReviewPlugin.on_message()` receiving an extra instance argument.
+
 ### v3.0.4
 
 - 优化权限控制台前端结构，首次进入保持群聊/私聊列表折叠，中间配置区保持待配置状态，选择目标后再展示配置项。
