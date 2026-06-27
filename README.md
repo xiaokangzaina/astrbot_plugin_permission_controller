@@ -113,6 +113,11 @@ data/plugins/astrbot_plugin_permission_controller
 
 ## 版本
 
+### v3.0.8
+
+- 自定义背景音上传改为写入插件后端数据目录，避开 AstrBot 设置页禁用 IndexedDB 导致的上传失败。
+- 优化深色模式下思考强度控件和原生下拉选项的文字对比度，避免白底浅字看不清。
+
 ### v3.0.7
 
 - Add late and deferred duplicate-runtime cleanup after plugin load and AstrBot load events.

@@ -30,6 +30,8 @@ TONE_STATE_FILE = PLUGIN_DIR / "data" / "settings_tone.json"
 BACKGROUND_STATE_FILE = PLUGIN_DIR / "data" / "settings_background.json"
 AUDIO_STATE_FILE = PLUGIN_DIR / "data" / "settings_audio.json"
 BACKGROUND_MEDIA_DIR = PLUGIN_DIR / "data" / "backgrounds"
+AUDIO_MEDIA_DIR = PLUGIN_DIR / "data" / "audio"
+CUSTOM_AUDIO_METADATA_FILE = AUDIO_MEDIA_DIR / "custom_background_audio.json"
 DEFAULT_AUDIO_FILE = PLUGIN_DIR / "pages" / "settings" / "assets" / "audio" / "rebirth-after-disaster.mp3"
 FUSION_OVERRIDES_FILE = PLUGIN_DIR / "data" / "fusion_overrides.json"
 VALID_THEME_MODES = {"auto", "light", "dark"}
@@ -67,6 +69,30 @@ VALID_BACKGROUND_MIME_TYPES = {
     "image/webp": ".webp",
 }
 MAX_BACKGROUND_BYTES = 12 * 1024 * 1024
+VALID_AUDIO_MIME_TYPES = {
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
+}
+VALID_AUDIO_EXTENSIONS = {
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".weba": "audio/webm",
+    ".webm": "audio/webm",
+}
+MAX_AUDIO_BYTES = 32 * 1024 * 1024
 
 DEFAULT_BACKGROUND_STATE = {
     "enabled": False,
@@ -204,6 +230,115 @@ def _write_audio_state(payload: dict[str, Any]) -> dict[str, Any]:
     )
     state["persisted"] = True
     return state
+
+
+def _audio_mime_and_extension(file_name: Any, mime_type: Any) -> tuple[str, str]:
+    name = str(file_name or "").strip()
+    suffix = Path(name).suffix.lower()
+    mime = str(mime_type or "").strip().lower()
+    if mime in VALID_AUDIO_MIME_TYPES:
+        return mime, VALID_AUDIO_MIME_TYPES[mime]
+    if suffix in VALID_AUDIO_EXTENSIONS:
+        return VALID_AUDIO_EXTENSIONS[suffix], suffix
+    if mime.startswith("audio/"):
+        return mime, ".audio"
+    raise ValueError("audio file must be mp3, wav, ogg, m4a, flac, aac, or webm")
+
+
+def _remove_custom_audio_files() -> None:
+    if not AUDIO_MEDIA_DIR.exists():
+        return
+    for item in AUDIO_MEDIA_DIR.iterdir():
+        if item.is_file() and item.name.startswith("custom_background_audio"):
+            try:
+                item.unlink()
+            except OSError:
+                pass
+
+
+def _decode_audio_upload_payload(payload: dict[str, Any]) -> tuple[str, str, str, bytes]:
+    file_name = str(payload.get("fileName") or payload.get("file_name") or "custom-background-audio").strip()
+    file_name = Path(file_name).name[:180] or "custom-background-audio"
+    mime_type, extension = _audio_mime_and_extension(file_name, payload.get("mime") or payload.get("mimeType"))
+    content = str(payload.get("content") or "")
+    if content.startswith("data:"):
+        header, separator, encoded = content.partition(",")
+        if separator != "," or ";base64" not in header:
+            raise ValueError("audio content must be base64")
+        header_mime = header[5:].split(";", 1)[0].strip().lower()
+        if header_mime:
+            mime_type, extension = _audio_mime_and_extension(file_name, header_mime)
+        content = encoded
+    try:
+        audio_bytes = base64.b64decode(content, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("audio content is not valid base64") from exc
+    if not audio_bytes:
+        raise ValueError("audio file is empty")
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise ValueError("audio file must be 32 MB or smaller")
+    return file_name, mime_type, extension, audio_bytes
+
+
+def _write_custom_audio(payload: dict[str, Any]) -> dict[str, Any]:
+    file_name, mime_type, extension, audio_bytes = _decode_audio_upload_payload(payload)
+    AUDIO_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    _remove_custom_audio_files()
+    audio_file = f"custom_background_audio{extension}"
+    (AUDIO_MEDIA_DIR / audio_file).write_bytes(audio_bytes)
+    metadata = {
+        "exists": True,
+        "fileName": file_name,
+        "media_file": audio_file,
+        "mime": mime_type,
+        "size": len(audio_bytes),
+        "updated_at": int(time.time()),
+    }
+    CUSTOM_AUDIO_METADATA_FILE.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    current_state = _read_audio_state()
+    current_state.update({"source": "custom", "trackName": file_name})
+    _write_audio_state(current_state)
+    return metadata
+
+
+def _read_custom_audio(include_content: bool = True) -> dict[str, Any]:
+    try:
+        metadata = json.loads(CUSTOM_AUDIO_METADATA_FILE.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except Exception:
+        metadata = {}
+    media_file = str(metadata.get("media_file") or "")
+    media_path = AUDIO_MEDIA_DIR / media_file if media_file else Path()
+    if not media_file or not media_path.exists() or not media_path.is_file():
+        return {"exists": False}
+    result = {
+        "exists": True,
+        "fileName": str(metadata.get("fileName") or media_path.name),
+        "media_file": media_file,
+        "mime": str(metadata.get("mime") or VALID_AUDIO_EXTENSIONS.get(media_path.suffix.lower(), "audio/mpeg")),
+        "size": media_path.stat().st_size,
+        "updated_at": int(metadata.get("updated_at") or 0),
+    }
+    if include_content:
+        result["content"] = base64.b64encode(media_path.read_bytes()).decode("ascii")
+    return result
+
+
+def _reset_custom_audio() -> dict[str, Any]:
+    _remove_custom_audio_files()
+    try:
+        CUSTOM_AUDIO_METADATA_FILE.unlink()
+    except OSError:
+        pass
+    current_state = _read_audio_state()
+    if current_state.get("source") == "custom":
+        current_state.update({"source": "default", "trackName": ""})
+        _write_audio_state(current_state)
+    return {"exists": False}
 
 
 def _clamp_number(value: Any, default: float, minimum: float, maximum: float) -> float:
@@ -469,6 +604,24 @@ class PermissionWebController:
                 self.page_default_audio,
                 ["GET"],
                 "Load bundled default background audio",
+            ),
+            (
+                "/settings/audio/custom",
+                self.page_get_custom_audio,
+                ["GET"],
+                "Load custom background audio",
+            ),
+            (
+                "/settings/audio/custom",
+                self.page_save_custom_audio,
+                ["POST"],
+                "Save custom background audio",
+            ),
+            (
+                "/settings/audio/custom/reset",
+                self.page_reset_custom_audio,
+                ["POST"],
+                "Reset custom background audio",
             ),
             (
                 "/settings/audio/state",
@@ -963,6 +1116,16 @@ class PermissionWebController:
         return self._jsonify(
             {"ok": True, "data": _reset_background_preference()}
         )
+
+    async def page_get_custom_audio(self):
+        return self._jsonify({"ok": True, "data": _read_custom_audio(include_content=True)})
+
+    async def page_save_custom_audio(self):
+        payload = await self._request().get_json(force=True, silent=True) or {}
+        return self._jsonify({"ok": True, "data": _write_custom_audio(payload)})
+
+    async def page_reset_custom_audio(self):
+        return self._jsonify({"ok": True, "data": _reset_custom_audio()})
 
     async def page_get_audio_state(self):
         return self._jsonify({"ok": True, "data": _read_audio_state()})

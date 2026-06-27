@@ -9,6 +9,8 @@ const CUSTOM_AUDIO_KEY = "custom-background-audio";
 const DEFAULT_TRACK_PATH = "assets/audio/rebirth-after-disaster.mp3";
 const DEFAULT_AUDIO_ENDPOINT = "settings/audio/default";
 const AUDIO_STATE_ENDPOINT = "settings/audio/state";
+const CUSTOM_AUDIO_ENDPOINT = "settings/audio/custom";
+const CUSTOM_AUDIO_RESET_ENDPOINT = "settings/audio/custom/reset";
 const AUDIO_CACHE_VERSION = "permission_console_audio_20260627_v330";
 const DEFAULT_TRACK_CANDIDATES = buildDefaultTrackCandidates();
 const DEFAULT_TRACK_SRC = DEFAULT_TRACK_CANDIDATES[0] || DEFAULT_TRACK_PATH;
@@ -157,6 +159,74 @@ async function fetchDefaultTrackBlobFromBridge() {
     throw new Error("默认音频接口返回为空");
   }
   return base64ToBlob(data.content, data.mime || "audio/mpeg");
+}
+
+function fileToBase64Content(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.slice(value.indexOf(",") + 1) : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("读取音频文件失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fetchCustomTrackBlobFromBridge() {
+  const apiGet = window.AstrBotPluginPage?.apiGet?.bind(window.AstrBotPluginPage);
+  if (!apiGet) throw new Error("自定义音频接口不可用");
+  const data = bridgeData(
+    await withTimeout(apiGet(CUSTOM_AUDIO_ENDPOINT), 5000, "自定义音频接口读取超时"),
+  );
+  if (!data?.exists || typeof data.content !== "string" || data.content.length < 16) {
+    throw new Error("未找到已上传的自定义背景音");
+  }
+  return {
+    blob: base64ToBlob(data.content, data.mime || "audio/mpeg"),
+    fileName: String(data.fileName || ""),
+  };
+}
+
+async function saveCustomTrackToBridge(file) {
+  const apiPost = window.AstrBotPluginPage?.apiPost?.bind(window.AstrBotPluginPage);
+  if (!apiPost) throw new Error("自定义音频上传接口不可用");
+  const content = await fileToBase64Content(file);
+  return bridgeData(
+    await withTimeout(
+      apiPost(CUSTOM_AUDIO_ENDPOINT, {
+        fileName: file.name || "custom-background-audio",
+        mime: file.type || "audio/mpeg",
+        content,
+      }),
+      12000,
+      "自定义音频上传超时",
+    ),
+  );
+}
+
+async function deleteCustomTrackFromBridge() {
+  const apiPost = window.AstrBotPluginPage?.apiPost?.bind(window.AstrBotPluginPage);
+  if (!apiPost) return null;
+  return bridgeData(
+    await withTimeout(apiPost(CUSTOM_AUDIO_RESET_ENDPOINT, {}), 3000, "自定义音频重置超时"),
+  );
+}
+
+async function saveCustomAudioFile(file) {
+  try {
+    const saved = await saveCustomTrackToBridge(file);
+    return { backend: true, fileName: saved?.fileName || file.name || "自定义背景音" };
+  } catch (backendError) {
+    try {
+      await idbPut(CUSTOM_AUDIO_KEY, file);
+      return { backend: false, fileName: file.name || "自定义背景音" };
+    } catch {
+      throw new Error(
+        "自定义背景音保存失败：当前插件设置环境禁止 IndexedDB，请重载插件后再上传。",
+      );
+    }
+  }
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -418,14 +488,30 @@ async function resolveDefaultTrackSrc() {
 
 async function resolveTrackSrc() {
   if (state.source !== "custom") return resolveDefaultTrackSrc();
-  const blob = await withTimeout(idbGet(CUSTOM_AUDIO_KEY), 1800, "读取自定义音频超时");
+  try {
+    const custom = await fetchCustomTrackBlobFromBridge();
+    revokeCustomUrl();
+    state.customUrl = URL.createObjectURL(custom.blob);
+    if (custom.fileName) state.trackName = custom.fileName;
+    state.lastPlayError = "";
+    return state.customUrl;
+  } catch (err) {
+    state.lastPlayError = err?.message || "自定义音频接口读取失败";
+  }
+  let blob = null;
+  try {
+    blob = await withTimeout(idbGet(CUSTOM_AUDIO_KEY), 1800, "读取自定义音频超时");
+  } catch {
+    blob = null;
+  }
   if (!blob) {
     state.source = "default";
     state.trackName = DEFAULT_TRACK_NAME;
     state.assetError = false;
     state.defaultTrackIndex = 0;
     persistState();
-    return defaultTrackSrc();
+    await persistStateToBackend();
+    return resolveDefaultTrackSrc();
   }
   revokeCustomUrl();
   state.customUrl = URL.createObjectURL(blob);
@@ -709,9 +795,9 @@ async function handleUpload(file) {
     updateUi("音频文件不能超过 32MB");
     return;
   }
-  await idbPut(CUSTOM_AUDIO_KEY, file);
+  const saved = await saveCustomAudioFile(file);
   state.source = "custom";
-  state.trackName = file.name || "自定义背景音";
+  state.trackName = saved.fileName || file.name || "自定义背景音";
   state.assetError = false;
   persistState();
   await persistStateToBackend();
@@ -720,11 +806,12 @@ async function handleUpload(file) {
     state.audio.remove();
     state.audio = null;
   }
-  updateUi("自定义背景音已保存");
+  updateUi(saved.backend ? "自定义背景音已保存到插件" : "自定义背景音已保存到浏览器");
   if (state.bgmEnabled) await playBgm();
 }
 
 async function resetTrack() {
+  await deleteCustomTrackFromBridge().catch(() => {});
   await idbDelete(CUSTOM_AUDIO_KEY).catch(() => {});
   revokeCustomUrl();
   state.source = "default";
@@ -825,6 +912,14 @@ function bindControls() {
 
 async function restoreCustomNameIfNeeded() {
   if (state.source !== "custom") return;
+  try {
+    const custom = await fetchCustomTrackBlobFromBridge();
+    if (custom.fileName) {
+      state.trackName = custom.fileName;
+      persistState();
+      return;
+    }
+  } catch {}
   try {
     const blob = await withTimeout(idbGet(CUSTOM_AUDIO_KEY), 1800, "读取自定义音频超时");
     if (!blob) {

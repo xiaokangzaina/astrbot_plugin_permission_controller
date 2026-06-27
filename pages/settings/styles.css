@@ -876,7 +876,30 @@ h2 {
 
 :root[data-theme="dark"] .field textarea,
 :root[data-theme="dark"] .field select {
-  background: rgba(255, 255, 255, .06);
+  color: #f4f8ff;
+  background: rgba(18, 27, 39, .92);
+  border-color: rgba(143, 169, 196, .34);
+}
+
+.field select option {
+  color: #0f1a27;
+  background: #ffffff;
+}
+
+:root[data-theme="dark"] .field select option {
+  color: #f4f8ff;
+  background: #202a37;
+}
+
+:root[data-theme="dark"] .field select option:checked,
+:root[data-theme="dark"] .field select option:hover {
+  color: #ffffff;
+  background: #344257;
+}
+
+:root[data-theme="dark"] .field select option:disabled {
+  color: #9aaabc;
+  background: #202a37;
 }
 
 .field textarea {
@@ -2006,7 +2029,18 @@ body.sound-bgm-on .sound-dock::before {
 }
 
 :root[data-theme="dark"] .token {
-  background: rgba(255, 255, 255, .05);
+  color: #d7e3f0;
+  border-color: rgba(75, 216, 255, .28);
+  background: rgba(21, 32, 45, .82);
+}
+
+:root[data-theme="dark"] .reasoning-grid .field {
+  border-radius: var(--control);
+  background: rgba(255, 255, 255, .025);
+}
+
+:root[data-theme="dark"] .reasoning-grid .field span {
+  color: #d7e3f0;
 }
 
 .metric-card.danger strong {
