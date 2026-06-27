@@ -144,7 +144,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "权限控制台：统一管理权限控制、融合模块、背景音乐和按钮音效",
-    "3.0.5",
+    "3.0.6",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
@@ -242,6 +242,20 @@ class GroupUserWhitelistPlugin(Star):
         base = cls._bundled_base_package()
         return module_path == base or module_path.startswith(f"{base}.")
 
+    @classmethod
+    def _standalone_fusion_package_paths(cls) -> tuple[str, ...]:
+        return tuple(f"data.plugins.{spec['directory']}" for spec in BUNDLED_PLUGIN_SPECS)
+
+    @classmethod
+    def _is_standalone_fusion_module_path(cls, module_path: str | None) -> bool:
+        if not module_path:
+            return False
+        value = str(module_path)
+        for base in cls._standalone_fusion_package_paths():
+            if value == base or value.startswith(f"{base}."):
+                return True
+        return False
+
     @staticmethod
     def _callable_module_path(value) -> str:
         handler = getattr(value, "func", value)
@@ -291,6 +305,38 @@ class GroupUserWhitelistPlugin(Star):
             handler_path = self._callable_module_path(getattr(func_tool, "handler", None))
             if self._is_bundled_module_path(handler_module_path) or self._is_bundled_module_path(handler_path):
                 llm_tools.func_list.remove(func_tool)
+
+    def _remove_standalone_fusion_runtime_state(self) -> None:
+        removed_handlers = 0
+        removed_tools = 0
+
+        for handler in list(star_handlers_registry):
+            if self._is_standalone_fusion_module_path(handler.handler_module_path):
+                star_handlers_registry.remove(handler)
+                removed_handlers += 1
+
+        for key, handler in list(star_handlers_registry.star_handlers_map.items()):
+            handler_module_path = str(getattr(handler, "handler_module_path", "") or "")
+            if self._is_standalone_fusion_module_path(key) or self._is_standalone_fusion_module_path(
+                handler_module_path
+            ):
+                star_handlers_registry.star_handlers_map.pop(key, None)
+
+        for func_tool in list(llm_tools.func_list):
+            handler_module_path = str(getattr(func_tool, "handler_module_path", "") or "")
+            handler_path = self._callable_module_path(getattr(func_tool, "handler", None))
+            if self._is_standalone_fusion_module_path(
+                handler_module_path
+            ) or self._is_standalone_fusion_module_path(handler_path):
+                llm_tools.func_list.remove(func_tool)
+                removed_tools += 1
+
+        if removed_handlers or removed_tools:
+            logger.info(
+                "[PermissionController] removed duplicate standalone fusion runtime state: handlers=%s, tools=%s",
+                removed_handlers,
+                removed_tools,
+            )
 
     def _apply_bundled_metadata(self, spec: dict, module, plugin_cls, plugin_config) -> None:
         module_name = module.__name__
@@ -524,6 +570,7 @@ class GroupUserWhitelistPlugin(Star):
         return full_names
 
     def _load_bundled_plugins(self) -> None:
+        self._remove_standalone_fusion_runtime_state()
         self._remove_bundled_runtime_state()
         for spec in BUNDLED_PLUGIN_SPECS:
             directory = str(spec["directory"])

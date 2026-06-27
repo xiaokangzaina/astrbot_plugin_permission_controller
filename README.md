@@ -113,6 +113,11 @@ data/plugins/astrbot_plugin_permission_controller
 
 ## 版本
 
+### v3.0.6
+
+- Remove stale runtime handlers and LLM tools left by standalone copies of the fused plugins before loading bundled fusion modules.
+- Fix the AstrBot command-conflict panel reporting duplicate QQAdmin, raw-image, AIP-review, and webshot commands after standalone duplicates are disabled.
+
 ### v3.0.5
 
 - Fix duplicated fusion handler binding after bundled plugin initialization/reload.
