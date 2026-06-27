@@ -113,6 +113,11 @@ data/plugins/astrbot_plugin_permission_controller
 
 ## 版本
 
+### v3.0.11
+
+- 移除视觉背景卡片里的预览小图标块，标题区域不再保留多余占位。
+- 自定义视觉背景启用后，控制台卡片透明度进一步提高，并降低背景遮罩和磨砂模糊强度，让背景图或视频更清晰可见。
+
 ### v3.0.10
 
 - 新增自定义视觉背景上传，支持 PNG、JPG、WebP、GIF、MP4、WebM 和 OGV。

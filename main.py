@@ -145,7 +145,7 @@ class _AstrBotAfterMessageSentLogFilter(logging.Filter):
     "astrbot_plugin_permission_controller",
     "local",
     "权限控制台：统一管理权限控制、融合模块、背景音乐、按钮音效和自定义视觉背景",
-    "3.0.10",
+    "3.0.11",
 )
 class GroupUserWhitelistPlugin(Star):
     """AstrBot 权限控制器主类。
