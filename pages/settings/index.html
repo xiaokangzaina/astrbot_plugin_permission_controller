@@ -59,11 +59,16 @@
             <span class="icon icon-theme" aria-hidden="true"></span>
             <span id="themeText">自动</span>
           </button>
+          <button class="icon-button bgm-toggle" id="bgmToggleBtn" type="button" aria-pressed="false" title="开启背景音乐" aria-label="开启背景音乐">
+            <span class="icon icon-bgm" aria-hidden="true"></span>
+            <span id="bgmStateText">BGM</span>
+          </button>
           <button class="icon-button" id="refreshGroupsBtn" type="button" title="同步列表" aria-label="同步列表">
             <span class="icon icon-refresh" aria-hidden="true"></span>
             <span>同步</span>
           </button>
         </div>
+        <p class="sound-track-label" id="bgmTrackLabel">小k橘子 - 劫后余生</p>
 
         <section class="fusion-nav-section" aria-label="插件分区">
           <div class="list-head">
@@ -262,6 +267,7 @@
   </div>
 
   <div class="toast-layer" id="toastLayer"></div>
-  <script type="module" src="./app.js?v=product_design_20260624_fusion_console_12_persisted_tone"></script>
+  <script type="module" src="./sound.js?v=product_design_20260627_default_bgm"></script>
+  <script type="module" src="./app.js?v=product_design_20260627_default_bgm"></script>
 </body>
 </html>

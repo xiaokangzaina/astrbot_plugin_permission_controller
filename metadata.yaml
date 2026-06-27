@@ -1,6 +1,6 @@
 name: astrbot_plugin_permission_controller
 display_name: 权限控制台
-desc: 五合一 AstrBot 权限控制台，统一管理权限控制、通用生图、安全审核、QQ群管和网页截图，并支持按群聊或私聊对象单独启用功能。
+desc: 五合一 AstrBot 权限控制台，统一管理权限控制、通用生图、安全审核、QQ群管和网页截图，内置默认背景音乐。
 help: 安装后打开插件配置页，左侧切换功能模块，中间选择群聊或私聊对象，右侧直接编辑配置项；通用生图、安全审核、QQ群管、网页截图可按当前对象启用或关闭。
 version: v3.0.1
 author: xiaokangzaina

@@ -444,6 +444,18 @@ h1 {
   flex: 1;
 }
 
+.sound-track-label {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.35;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .fusion-nav-section {
   display: grid;
   gap: 9px;
@@ -796,6 +808,59 @@ button:disabled {
   border-radius: 999px;
   background: currentColor;
   transform: rotate(45deg);
+}
+
+.bgm-toggle.is-on {
+  border-color: rgba(var(--accent-rgb), .46);
+  color: var(--accent);
+  background:
+    linear-gradient(135deg, rgba(var(--accent-rgb), .18), rgba(var(--accent-4-rgb), .16)),
+    var(--surface-hover);
+  box-shadow:
+    0 14px 34px rgba(var(--accent-rgb), .18),
+    inset 0 1px 0 rgba(255, 255, 255, .34);
+}
+
+.icon-bgm {
+  display: inline-flex;
+  align-items: end;
+  justify-content: center;
+  gap: 2px;
+}
+
+.icon-bgm::before,
+.icon-bgm::after {
+  content: "";
+  width: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: .82;
+}
+
+.icon-bgm::before {
+  height: 10px;
+}
+
+.icon-bgm::after {
+  height: 15px;
+}
+
+.bgm-toggle.is-on .icon-bgm::before {
+  animation: bgmPulse 1.35s ease-in-out infinite;
+}
+
+.bgm-toggle.is-on .icon-bgm::after {
+  animation: bgmPulse 1.35s ease-in-out .22s infinite;
+}
+
+@keyframes bgmPulse {
+  0%,
+  100% {
+    transform: scaleY(.64);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 
 .search-box {
