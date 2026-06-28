@@ -453,6 +453,9 @@ def _decode_background_data_url(data_url: Any, file_name: Any = "") -> tuple[str
 
 def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
     state = _read_background_state(include_data_url=False)
+    data_url = payload.get("data_url")
+    visual_keys = {"enabled", "crop_x", "crop_y", "overlay", "blur", "data_url", "file_name", "fileName"}
+    has_visual_change = bool(data_url) or any(key in payload for key in visual_keys)
     state["enabled"] = bool(payload.get("enabled", state.get("enabled")))
     state["crop_x"] = round(_clamp_number(payload.get("crop_x"), state["crop_x"], 0, 100), 2)
     state["crop_y"] = round(_clamp_number(payload.get("crop_y"), state["crop_y"], 0, 100), 2)
@@ -468,7 +471,6 @@ def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
         3,
     )
 
-    data_url = payload.get("data_url")
     if data_url:
         media_type, extension, content = _decode_background_data_url(
             data_url,
@@ -489,7 +491,8 @@ def _write_background_preference(payload: dict[str, Any]) -> dict[str, Any]:
         )
     if not state.get("media_file"):
         state["enabled"] = False
-    state["updated_at"] = int(time.time())
+    if has_visual_change:
+        state["updated_at"] = int(time.time())
     include_data_url = payload.get("includeDataUrl", payload.get("include_data_url", True))
     return _write_background_state(state, include_data_url=include_data_url is not False)
 

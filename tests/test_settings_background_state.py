@@ -2,6 +2,7 @@ import base64
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from astrbot_plugin_permission_controller import web
 
@@ -90,6 +91,32 @@ class SettingsBackgroundStateTest(unittest.TestCase):
             }
         )
         self.assertEqual(replaced["currentTime"], 0)
+
+    def test_progress_only_update_keeps_media_identity_timestamp(self):
+        video_bytes = b"\x00\x00\x00\x18ftypmp42" + b"\0" * 256
+        data_url = "data:video/mp4;base64," + base64.b64encode(video_bytes).decode("ascii")
+
+        with patch("astrbot_plugin_permission_controller.web.time.time", return_value=1000):
+            saved = web._write_background_preference(
+                {
+                    "data_url": data_url,
+                    "file_name": "motion.mp4",
+                }
+            )
+        self.assertEqual(saved["updated_at"], 1000)
+
+        with patch("astrbot_plugin_permission_controller.web.time.time", return_value=2000):
+            progressed = web._write_background_preference(
+                {"currentTime": 12.5, "includeDataUrl": False}
+            )
+        self.assertEqual(progressed["currentTime"], 12.5)
+        self.assertEqual(progressed["updated_at"], 1000)
+
+        with patch("astrbot_plugin_permission_controller.web.time.time", return_value=3000):
+            visual_change = web._write_background_preference(
+                {"overlay": 0.55, "includeDataUrl": False}
+            )
+        self.assertEqual(visual_change["updated_at"], 3000)
 
 
 if __name__ == "__main__":

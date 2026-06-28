@@ -117,6 +117,8 @@ let backgroundVideoFill = null;
 let backgroundVideoCurrentTime = 0;
 let backgroundVideoLastSaveAt = 0;
 let backgroundProgressId = "";
+let backgroundVideoRestorePending = false;
+let backgroundVideoTargetTime = 0;
 
 const els = {
   themeText: document.getElementById("themeText"),
@@ -259,7 +261,6 @@ function backgroundProgressIdentity(background = {}) {
     String(background.media_type || ""),
     String(background.media_file || ""),
     String(background.file_name || ""),
-    String(background.updated_at || ""),
   ].join("|");
 }
 
@@ -315,12 +316,47 @@ function syncBackgroundVideoAudio() {
   }
 }
 
-function seekBackgroundVideo(media, savedTime = backgroundVideoCurrentTime) {
+function backgroundVideoSeekTarget(media, savedTime = backgroundVideoTargetTime) {
   const nextTime = clampNumber(savedTime, 0, MAX_BACKGROUND_PROGRESS, 0);
-  if (!nextTime || !Number.isFinite(media.duration) || media.duration <= 1) return;
+  if (!nextTime || !media || !Number.isFinite(media.duration) || media.duration <= 1) return 0;
+  return nextTime >= media.duration ? nextTime % media.duration : nextTime;
+}
+
+function backgroundVideoReachedTarget(media = backgroundVideo) {
+  if (!media || !backgroundVideoRestorePending) return true;
+  const targetTime = backgroundVideoSeekTarget(media);
+  if (!targetTime) return true;
+  return media.currentTime >= Math.max(0, targetTime - 0.35);
+}
+
+function seekBackgroundVideo(media, savedTime = backgroundVideoTargetTime) {
+  const targetTime = backgroundVideoSeekTarget(media, savedTime);
+  if (!targetTime) return !savedTime;
   try {
-    media.currentTime = nextTime >= media.duration ? nextTime % media.duration : nextTime;
-  } catch {}
+    if (Math.abs(media.currentTime - targetTime) > 0.25) {
+      media.currentTime = targetTime;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function markBackgroundVideoRestored() {
+  if (!backgroundVideo || !backgroundVideoRestorePending) return true;
+  if (!backgroundVideoReachedTarget(backgroundVideo)) return false;
+  backgroundVideoRestorePending = false;
+  backgroundVideoCurrentTime = clampNumber(backgroundVideo.currentTime, 0, MAX_BACKGROUND_PROGRESS, backgroundVideoCurrentTime);
+  syncBackgroundFillProgress();
+  return true;
+}
+
+function restoreBackgroundVideoProgress() {
+  if (!backgroundVideo) return true;
+  if (!backgroundVideoRestorePending) return true;
+  seekBackgroundVideo(backgroundVideo);
+  if (backgroundVideoFill) seekBackgroundVideo(backgroundVideoFill);
+  return false;
 }
 
 function syncBackgroundFillProgress() {
@@ -335,6 +371,12 @@ function syncBackgroundFillProgress() {
 function persistBackgroundVideoProgress({ force = false } = {}) {
   if (!backgroundVideo) return;
   const currentTime = clampNumber(backgroundVideo.currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
+  if (backgroundVideoRestorePending && backgroundVideoTargetTime > 0) {
+    restoreBackgroundVideoProgress();
+  }
+  if (backgroundVideoRestorePending && backgroundVideoTargetTime > 0) {
+    return;
+  }
   if (!force && Math.abs(currentTime - backgroundVideoCurrentTime) < 0.75) return;
   const now = Date.now();
   if (!force && now - backgroundVideoLastSaveAt < BACKGROUND_PROGRESS_SAVE_INTERVAL_MS) return;
@@ -351,6 +393,7 @@ function persistBackgroundVideoProgress({ force = false } = {}) {
 async function playBackgroundVideo(media) {
   if (!media || typeof media.play !== "function") return;
   syncBackgroundVideoAudio();
+  restoreBackgroundVideoProgress();
   if (backgroundVideoFill?.play) backgroundVideoFill.play().catch(() => {});
   try {
     await media.play();
@@ -370,6 +413,8 @@ function resetBackgroundLayer() {
   backgroundVideoCurrentTime = 0;
   backgroundVideoLastSaveAt = 0;
   backgroundProgressId = "";
+  backgroundVideoRestorePending = false;
+  backgroundVideoTargetTime = 0;
   root.removeAttribute("data-custom-background");
   document.body.classList.remove("has-custom-background");
   if (els.backgroundLayer) els.backgroundLayer.replaceChildren();
@@ -403,9 +448,6 @@ function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0, progressId =
   const fill = createBackgroundMediaElement(kind, "custom-background-fill");
   const media = createBackgroundMediaElement(kind, "custom-background-media");
   stage.className = "custom-background-stage";
-  fill.src = dataUrl;
-  media.src = dataUrl;
-  stage.append(fill, media);
   if (kind === "video") {
     backgroundVideo = media;
     backgroundVideoFill = fill;
@@ -413,17 +455,30 @@ function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0, progressId =
     backgroundVideoCurrentTime =
       readLocalBackgroundProgress(progressId) ||
       clampNumber(currentTime, 0, MAX_BACKGROUND_PROGRESS, 0);
+    backgroundVideoTargetTime = backgroundVideoCurrentTime;
+    backgroundVideoRestorePending = backgroundVideoCurrentTime > 0;
     fill.muted = true;
     fill.volume = 0;
     media.muted = getBgmEnabled();
-    media.addEventListener("loadedmetadata", () => {
-      seekBackgroundVideo(media);
-      seekBackgroundVideo(fill);
+    const restoreAndPlay = () => {
+      restoreBackgroundVideoProgress();
       syncBackgroundVideoAudio();
       playBackgroundVideo(media);
-    }, { once: true });
-    fill.addEventListener("loadedmetadata", () => seekBackgroundVideo(fill), { once: true });
+    };
+    media.addEventListener("loadedmetadata", restoreAndPlay);
+    media.addEventListener("loadeddata", restoreAndPlay);
+    media.addEventListener("canplay", restoreAndPlay);
+    fill.addEventListener("loadedmetadata", restoreBackgroundVideoProgress);
+    fill.addEventListener("loadeddata", restoreBackgroundVideoProgress);
+    media.addEventListener("seeked", markBackgroundVideoRestored);
     media.addEventListener("timeupdate", () => {
+      if (backgroundVideoRestorePending) {
+        markBackgroundVideoRestored();
+        if (backgroundVideoRestorePending) {
+          restoreBackgroundVideoProgress();
+          return;
+        }
+      }
       syncBackgroundFillProgress();
       persistBackgroundVideoProgress();
     });
@@ -435,8 +490,14 @@ function renderBackgroundMedia(dataUrl, mediaType, currentTime = 0, progressId =
     backgroundVideoCurrentTime = 0;
     backgroundVideoLastSaveAt = 0;
     backgroundProgressId = "";
+    backgroundVideoRestorePending = false;
+    backgroundVideoTargetTime = 0;
   }
+  fill.src = dataUrl;
+  media.src = dataUrl;
+  stage.append(fill, media);
   els.backgroundLayer.replaceChildren(stage);
+  if (kind === "video" && media.readyState >= 1) restoreBackgroundVideoProgress();
   if (kind === "video") playBackgroundVideo(media);
 }
 
