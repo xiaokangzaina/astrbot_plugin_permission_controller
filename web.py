@@ -33,35 +33,7 @@ BACKGROUND_MEDIA_DIR = PLUGIN_DIR / "data" / "backgrounds"
 AUDIO_MEDIA_DIR = PLUGIN_DIR / "data" / "audio"
 CUSTOM_AUDIO_METADATA_FILE = AUDIO_MEDIA_DIR / "custom_background_audio.json"
 DEFAULT_AUDIO_FILE = PLUGIN_DIR / "pages" / "settings" / "assets" / "audio" / "rebirth-after-disaster.mp3"
-FUSION_OVERRIDES_FILE = PLUGIN_DIR / "data" / "fusion_overrides.json"
 VALID_THEME_MODES = {"auto", "light", "dark"}
-VALID_FUSION_TARGET_TYPES = {"global", "groups", "privates"}
-FUSION_ACCESS_STATUS_FIELDS = {
-    "raw-image": {
-        "providers": [
-            "fusion_access.enabled",
-            "fusion_access.enable_groups",
-            "fusion_access.enable_privates",
-        ],
-    },
-    "aip-review": {
-        "global-policy": [
-            "fusion_access.enabled",
-            "fusion_access.enable_groups",
-            "fusion_access.enable_privates",
-        ],
-    },
-    "webshot": {
-        "targets": [
-            "fusion_access.enabled",
-            "fusion_access.enable_groups",
-            "fusion_access.enable_privates",
-        ],
-    },
-    "qqadmin": {
-        "actions": ["default.group_admin_enabled"],
-    },
-}
 VALID_BACKGROUND_MIME_TYPES = {
     "image/gif": ".gif",
     "image/jpeg": ".jpg",
@@ -502,80 +474,6 @@ def _reset_background_preference() -> dict[str, Any]:
     return _write_background_state(dict(DEFAULT_BACKGROUND_STATE))
 
 
-def _read_fusion_overrides() -> dict[str, Any]:
-    try:
-        payload = json.loads(FUSION_OVERRIDES_FILE.read_text(encoding="utf-8"))
-        if isinstance(payload, dict):
-            payload.setdefault("version", 1)
-            payload.setdefault("plugins", {})
-            return payload
-    except Exception:
-        pass
-    return {"version": 1, "plugins": {}}
-
-
-def _write_fusion_overrides(payload: dict[str, Any]) -> dict[str, Any]:
-    FUSION_OVERRIDES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload["version"] = 1
-    payload.setdefault("plugins", {})
-    FUSION_OVERRIDES_FILE.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return payload
-
-
-def _fusion_access_index(state: dict[str, Any]) -> dict[str, Any]:
-    plugins = state.get("plugins", {})
-    if not isinstance(plugins, dict):
-        return {}
-
-    result: dict[str, Any] = {}
-    for plugin_id, module_paths in FUSION_ACCESS_STATUS_FIELDS.items():
-        plugin_bucket = plugins.get(plugin_id, {})
-        if not isinstance(plugin_bucket, dict):
-            continue
-        for target_type in VALID_FUSION_TARGET_TYPES:
-            type_bucket = plugin_bucket.get(target_type, {})
-            if not isinstance(type_bucket, dict):
-                continue
-            for target_id, target_bucket in type_bucket.items():
-                if not isinstance(target_bucket, dict):
-                    continue
-                modules = target_bucket.get("modules", {})
-                if not isinstance(modules, dict):
-                    continue
-                for module_id, watched_paths in module_paths.items():
-                    module = modules.get(module_id, {})
-                    values = module.get("values", {}) if isinstance(module, dict) else {}
-                    if not isinstance(values, dict):
-                        continue
-                    indexed_values = {
-                        path: values[path]
-                        for path in watched_paths
-                        if path in values
-                    }
-                    if not indexed_values:
-                        continue
-                    result.setdefault(plugin_id, {}).setdefault(target_type, {}).setdefault(
-                        str(target_id),
-                        {},
-                    )[module_id] = indexed_values
-    return result
-
-
-def _normalize_fusion_target(target_type: Any, target_id: Any) -> tuple[str, str]:
-    normalized_type = str(target_type or "global").strip().lower()
-    if normalized_type not in VALID_FUSION_TARGET_TYPES:
-        raise ValueError("invalid fusion target type")
-    normalized_id = str(target_id or "").strip()
-    if normalized_type == "global":
-        normalized_id = normalized_id or "default"
-    if not normalized_id:
-        raise ValueError("target_id must not be empty")
-    return normalized_type, normalized_id
-
-
 class PermissionWebController:
     """权限控制器配置页的 Web API 控制器。"""
 
@@ -650,7 +548,7 @@ class PermissionWebController:
                 "/settings/audio/default",
                 self.page_default_audio,
                 ["GET"],
-                "Load bundled default background audio",
+                "Load default background audio",
             ),
             (
                 "/settings/audio/custom",
@@ -681,30 +579,6 @@ class PermissionWebController:
                 self.page_save_audio_state,
                 ["POST"],
                 "Save settings page audio preference",
-            ),
-            (
-                "/settings/fusion",
-                self.page_fusion_status,
-                ["GET"],
-                "Load merged plugin status",
-            ),
-            (
-                "/settings/fusion/config",
-                self.page_get_fusion_config,
-                ["GET"],
-                "Load merged plugin inline config",
-            ),
-            (
-                "/settings/fusion/config",
-                self.page_save_fusion_config,
-                ["POST"],
-                "Save merged plugin inline config",
-            ),
-            (
-                "/settings/fusion/config/reset",
-                self.page_reset_fusion_config,
-                ["POST"],
-                "Reset merged plugin inline config",
             ),
             (
                 "/settings/groups/refresh",
@@ -809,179 +683,6 @@ class PermissionWebController:
         payload["groups"] = await self.service.list_groups()
         return self._jsonify(
             {"ok": True, "data": payload}
-        )
-
-    async def page_fusion_status(self):
-        status_loader = getattr(self.service.plugin, "get_bundled_plugin_status", None)
-        if not callable(status_loader):
-            raise RuntimeError("fusion status is unavailable")
-        state = _read_fusion_overrides()
-        return self._jsonify(
-            {
-                "ok": True,
-                "data": {
-                    "plugins": status_loader(),
-                    "access_index": _fusion_access_index(state),
-                },
-            }
-        )
-
-    def _fusion_plugin_status(self, plugin_id: Any) -> dict[str, Any]:
-        status_loader = getattr(self.service.plugin, "get_bundled_plugin_status", None)
-        if not callable(status_loader):
-            raise RuntimeError("fusion status is unavailable")
-        wanted = str(plugin_id or "").strip()
-        if not wanted:
-            raise ValueError("plugin_id must not be empty")
-        for item in status_loader():
-            item_id = str(item.get("id", ""))
-            directory = str(item.get("directory", ""))
-            if wanted in {item_id, directory}:
-                return dict(item)
-        raise ValueError("unknown fusion plugin")
-
-    @staticmethod
-    def _read_fusion_schema(directory: str) -> dict[str, Any]:
-        schema_path = PLUGIN_DIR / "bundled_plugins" / directory / "_conf_schema.json"
-        if not schema_path.exists():
-            return {}
-        payload = json.loads(schema_path.read_text(encoding="utf-8-sig") or "{}")
-        return payload if isinstance(payload, dict) else {}
-
-    @staticmethod
-    def _fusion_target_modules(
-        state: dict[str, Any],
-        plugin_id: str,
-        target_type: str,
-        target_id: str,
-        create: bool = False,
-    ) -> dict[str, Any]:
-        plugins = state.setdefault("plugins", {}) if create else state.get("plugins", {})
-        if not isinstance(plugins, dict):
-            return {}
-        plugin_bucket = (
-            plugins.setdefault(plugin_id, {}) if create else plugins.get(plugin_id, {})
-        )
-        if not isinstance(plugin_bucket, dict):
-            return {}
-        type_bucket = (
-            plugin_bucket.setdefault(target_type, {}) if create else plugin_bucket.get(target_type, {})
-        )
-        if not isinstance(type_bucket, dict):
-            return {}
-        target_bucket = (
-            type_bucket.setdefault(target_id, {}) if create else type_bucket.get(target_id, {})
-        )
-        if not isinstance(target_bucket, dict):
-            return {}
-        modules = target_bucket.setdefault("modules", {}) if create else target_bucket.get("modules", {})
-        return modules if isinstance(modules, dict) else {}
-
-    async def page_get_fusion_config(self):
-        args = self._request().args
-        plugin_status = self._fusion_plugin_status(args.get("plugin_id", ""))
-        plugin_id = str(plugin_status.get("id") or "")
-        directory = str(plugin_status.get("directory") or "")
-        target_type, target_id = _normalize_fusion_target(
-            args.get("target_type", "global"),
-            args.get("target_id", "default"),
-        )
-        state = _read_fusion_overrides()
-        modules = self._fusion_target_modules(state, plugin_id, target_type, target_id)
-        return self._jsonify(
-            {
-                "ok": True,
-                "data": {
-                    "plugin": plugin_status,
-                    "schema": self._read_fusion_schema(directory),
-                    "target": {"type": target_type, "id": target_id},
-                    "modules": modules,
-                    "updated_at": int(
-                        max(
-                            (
-                                float(item.get("updated_at", 0))
-                                for item in modules.values()
-                                if isinstance(item, dict)
-                            ),
-                            default=0,
-                        )
-                    ),
-                },
-            }
-        )
-
-    async def page_save_fusion_config(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
-        plugin_status = self._fusion_plugin_status(payload.get("plugin_id", ""))
-        plugin_id = str(plugin_status.get("id") or "")
-        module_id = str(payload.get("module_id") or "").strip()
-        if not module_id:
-            raise ValueError("module_id must not be empty")
-        values = payload.get("values", {})
-        if not isinstance(values, dict):
-            raise ValueError("values must be object")
-        target_type, target_id = _normalize_fusion_target(
-            payload.get("target_type", "global"),
-            payload.get("target_id", "default"),
-        )
-        state = _read_fusion_overrides()
-        modules = self._fusion_target_modules(
-            state,
-            plugin_id,
-            target_type,
-            target_id,
-            create=True,
-        )
-        modules[module_id] = {
-            "values": values,
-            "updated_at": int(time.time()),
-        }
-        _write_fusion_overrides(state)
-        return self._jsonify(
-            {
-                "ok": True,
-                "message": "融合覆盖配置已保存",
-                "data": {
-                    "plugin": plugin_status,
-                    "target": {"type": target_type, "id": target_id},
-                    "module_id": module_id,
-                    "module": modules[module_id],
-                },
-            }
-        )
-
-    async def page_reset_fusion_config(self):
-        payload = await self._request().get_json(force=True, silent=True) or {}
-        plugin_status = self._fusion_plugin_status(payload.get("plugin_id", ""))
-        plugin_id = str(plugin_status.get("id") or "")
-        module_id = str(payload.get("module_id") or "").strip()
-        if not module_id:
-            raise ValueError("module_id must not be empty")
-        target_type, target_id = _normalize_fusion_target(
-            payload.get("target_type", "global"),
-            payload.get("target_id", "default"),
-        )
-        state = _read_fusion_overrides()
-        modules = self._fusion_target_modules(
-            state,
-            plugin_id,
-            target_type,
-            target_id,
-            create=True,
-        )
-        modules.pop(module_id, None)
-        _write_fusion_overrides(state)
-        return self._jsonify(
-            {
-                "ok": True,
-                "message": "融合覆盖配置已重置",
-                "data": {
-                    "plugin": plugin_status,
-                    "target": {"type": target_type, "id": target_id},
-                    "module_id": module_id,
-                    "module": {"values": {}, "updated_at": 0},
-                },
-            }
         )
 
     async def page_weather(self):

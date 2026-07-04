@@ -1,8 +1,8 @@
 name: astrbot_plugin_permission_controller
 display_name: 权限控制台
-desc: 五合一 AstrBot 权限控制台，统一管理权限控制、通用生图、安全审核、QQ群管和网页截图，内置默认背景音乐、按钮音效、自定义背景音和自定义视觉背景上传。
-help: 安装后打开插件配置页，左侧切换功能模块，中间选择群聊或私聊对象，右侧直接编辑配置项；背景音乐、按钮音效和播放进度会自动保存，自定义背景音可在音效模块上传，自定义视觉背景支持图片、GIF 和视频。
-version: v3.0.14
+desc: AstrBot 权限控制台，专注管理群聊权限、私聊权限、黑白名单、管理员绕过和思考强度，保留背景音乐、按钮音效、自定义背景音和自定义视觉背景上传。
+help: 安装后打开插件配置页，选择群聊或私聊对象后编辑权限配置；背景音乐、按钮音效和播放进度会自动保存，自定义背景音可在音效模块上传，自定义视觉背景支持图片、GIF 和视频。
+version: v3.1.0
 author: xiaokangzaina
 repo: "https://github.com/xiaokangzaina/astrbot_plugin_permission_controller"
 astrbot_version: ">=4.0.0,<5"
